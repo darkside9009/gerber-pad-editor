@@ -73,7 +73,9 @@ zip.js        Minimal ZIP writer for the "download all" export
 
 ## Support
 
-If this tool saved you some time, a tip is always appreciated: [paypal.me/darkside9009](https://paypal.me/darkside9009)
+If this tool saved you some time, a tip is always appreciated:
+
+[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white&style=for-the-badge)](https://paypal.me/darkside9009)
 
 ## License
 
