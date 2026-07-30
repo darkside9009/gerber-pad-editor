@@ -1,5 +1,7 @@
 # Gerber Pad Editor
 
+[![Donate](https://img.shields.io/badge/Donate-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/darkside9009)
+
 A lightweight, browser-based editor for inspecting and editing pads (flashes) in Gerber (RS-274X) PCB layer files — no upload, no install, no build step. Everything runs locally in your browser as plain HTML/CSS/JS.
 
 Load one or more Gerber layers, click on any pad to move it or resize it, batch-edit pads that share the same size, measure distances, set a custom reference origin, draw brand-new pads, and export clean, valid Gerber back out — all through a fast canvas-based UI.
@@ -68,6 +70,10 @@ gerber.js     Gerber parser, writer and pad-editing primitives (no DOM dependenc
 app.js        Application state, canvas rendering, UI wiring, i18n
 zip.js        Minimal ZIP writer for the "download all" export
 ```
+
+## Support
+
+If this tool saved you some time, a tip is always appreciated: [paypal.me/darkside9009](https://paypal.me/darkside9009)
 
 ## License
 
