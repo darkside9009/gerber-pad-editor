@@ -14,7 +14,9 @@
       fs: { zeroOmission: 'L', mode: 'A', xInt: 3, xDec: 4, yInt: 3, yDec: 4 },
       apertures: {},          // dcode -> {shape, params:[...], macroName, raw, holeRaw}
       commands: [],           // ordered statements, see below
-      maxDcode: 9
+      maxDcode: 9,
+      texts: {},              // textId -> {id, text, x, y, height, strokeWidth, width, dcode} - editor-only
+      maxTextId: 0            // metadata, not part of the Gerber format itself (lost on reload)
     };
 
     const stmts = tokenize(text);
@@ -454,8 +456,14 @@
   // defaults to a legible ~15% of the height if omitted. Reuses a matching circular aperture as
   // the "pen" if one already exists (same dedup logic as addFlash), otherwise defines a new one.
   // Unsupported characters are drawn as a small placeholder box instead of silently vanishing.
+  //
+  // Every generated command is tagged with a shared `textId` and a matching entry is kept in
+  // layer.texts, so the app can re-select/re-edit/delete this text later in the same session
+  // (see removeText/editText). This bookkeeping is editor-only metadata, not part of the Gerber
+  // format - it does not survive a save+reload of the file.
   function addText(layer, text, xMm, yMm, heightMm, strokeWidthMm) {
     const strokeW = strokeWidthMm || heightMm * 0.15;
+    const textId = ++layer.maxTextId;
     const x0 = toFileUnits(layer, xMm);
     const y0 = toFileUnits(layer, yMm);
     const scale = toFileUnits(layer, heightMm) / 10;
@@ -494,7 +502,7 @@
             x: targetX, y: targetY, i: 0, j: 0,
             hasX: true, hasY: true, hasI: false, hasJ: false,
             prevX: curX, prevY: curY, dcode, polarity: 'D',
-            region: false, gmode: 1, quad: 'single'
+            region: false, gmode: 1, quad: 'single', textId
           };
           curX = targetX; curY = targetY;
           cmd.raw = rebuildOpRaw(cmd, layer.fs);
@@ -506,7 +514,31 @@
       penX += glyph.w + FONT_LETTER_GAP;
     }
 
-    return { commands: created, widthMm: Math.max(0, penX - FONT_LETTER_GAP) * (heightMm / 10) };
+    const widthMm = Math.max(0, penX - FONT_LETTER_GAP) * (heightMm / 10);
+    layer.texts[textId] = { id: textId, text, x: xMm, y: yMm, height: heightMm, strokeWidth: strokeW, width: widthMm, dcode };
+
+    return { id: textId, commands: created, widthMm };
+  }
+
+  // Remove a text object (all its generated stroke commands) previously created by addText/
+  // editText. Freezes whatever immediately follows the removed block so it can't inherit implicit
+  // coordinates from a command that's about to disappear (same reasoning as removeFlashes).
+  function removeText(layer, textId) {
+    const idxs = [];
+    layer.commands.forEach((c, i) => { if (c.textId === textId) idxs.push(i); });
+    if (idxs.length === 0) return false;
+    freezeDownstreamImplicitCoords(layer, Math.max(...idxs));
+    idxs.sort((a, b) => b - a).forEach(i => layer.commands.splice(i, 1));
+    delete layer.texts[textId];
+    return true;
+  }
+
+  // Replace an existing text object with new content/position/size. Implemented as remove-then-
+  // add, so the result gets a NEW textId - callers must update whatever they had selected to the
+  // returned id.
+  function editText(layer, textId, text, xMm, yMm, heightMm, strokeWidthMm) {
+    removeText(layer, textId);
+    return addText(layer, text, xMm, yMm, heightMm, strokeWidthMm);
   }
 
   // Change the size of one or more flashes at once. newParams are in the layer's native units
@@ -607,6 +639,8 @@
     removeFlashes,
     addFlash,
     addText,
+    removeText,
+    editText,
     textWidthMm,
     apertureExtents,
     toMm,

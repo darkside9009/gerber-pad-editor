@@ -74,6 +74,10 @@
       alertInvalidHeight: 'Ungültige Höhe.',
       alertInvalidStrokeWidth: 'Ungültige Strichstärke.',
       statusTextCreated: 'Text erstellt bei X={{x}}mm, Y={{y}}mm.',
+      deleteTextBtn: 'Text löschen',
+      statusTextUpdated: 'Text aktualisiert.',
+      confirmDeleteText: 'Diesen Text löschen?',
+      statusTextDeleted: 'Text gelöscht.',
       inspectorEmptyNoSelection: 'Kein Pad ausgewählt. Wähle zuerst links den zu bearbeitenden Layer aus (aktiv) und klicke dann im Canvas auf ein Pad.<br><br>Shift+Klick = Pad zur Auswahl hinzufügen/entfernen.<br>Shift+Ziehen = mehrere Pads mit einem Rahmen auswählen.',
       layerLabel: 'Layer',
       apertureLabel: 'Apertur',
@@ -172,6 +176,10 @@
       alertInvalidHeight: 'Invalid height.',
       alertInvalidStrokeWidth: 'Invalid line width.',
       statusTextCreated: 'Text created at X={{x}}mm, Y={{y}}mm.',
+      deleteTextBtn: 'Delete text',
+      statusTextUpdated: 'Text updated.',
+      confirmDeleteText: 'Delete this text?',
+      statusTextDeleted: 'Text deleted.',
       inspectorEmptyNoSelection: 'No pad selected. First select the layer to edit on the left (active), then click a pad on the canvas.<br><br>Shift+Click = add/remove pad from selection.<br>Shift+Drag = select multiple pads with a box.',
       layerLabel: 'Layer',
       apertureLabel: 'Aperture',
@@ -235,6 +243,7 @@
     layers: [],       // {id, name, layer, originalText, color, visible, dirty}
     activeId: null,
     selected: null,   // {layerId, flashes: Set<flashCmd>} or null
+    selectedText: null, // {layerId, textId} or null - mutually exclusive with `selected`
     view: { scale: 4, offsetX: 0, offsetY: 0 }, // scale = px per mm
     canvasReady: false,
     marquee: null,    // {x0,y0,x1,y1} in canvas-local px, while shift-dragging a selection box
@@ -788,12 +797,28 @@
     return best;
   }
 
+  // Bounding-box hit test for editor-only text objects (see Gerber.addText). Small padding
+  // relative to the text height makes descenders (comma, semicolon) and thin strokes easy to hit.
+  function hitTestText(lo, world) {
+    const texts = lo.layer.texts || {};
+    for (const id in texts) {
+      const tx = texts[id];
+      const pad = tx.height * 0.25;
+      if (world.x >= tx.x - pad && world.x <= tx.x + tx.width + pad &&
+          world.y >= tx.y - pad && world.y <= tx.y + tx.height * 1.05 + pad) {
+        return tx.id;
+      }
+    }
+    return null;
+  }
+
   function handleClick(px, py, shiftKey) {
     const lo = getActiveLayer();
     if (!lo) return;
     const world = toWorld(px, py);
     const best = hitTestFlash(lo, world);
     if (best) {
+      state.selectedText = null;
       if (shiftKey) {
         ensureSelectionFor(lo.id);
         if (state.selected.flashes.has(best)) state.selected.flashes.delete(best);
@@ -802,8 +827,14 @@
       } else {
         state.selected = { layerId: lo.id, flashes: new Set([best]) };
       }
-    } else if (!shiftKey) {
-      clearSelection();
+    } else {
+      const textId = hitTestText(lo, world);
+      if (textId !== null) {
+        state.selected = null;
+        state.selectedText = { layerId: lo.id, textId };
+      } else if (!shiftKey) {
+        clearSelection();
+      }
     }
     renderInspector();
     renderAll();
@@ -821,6 +852,7 @@
       return x >= minX && x <= maxX && y >= minY && y <= maxY;
     });
     if (hits.length === 0 && !subtract) return;
+    state.selectedText = null;
     ensureSelectionFor(lo.id);
     hits.forEach(f => {
       if (subtract) state.selected.flashes.delete(f);
@@ -854,6 +886,7 @@
 
   function clearSelection() {
     state.selected = null;
+    state.selectedText = null;
     renderInspector();
   }
 
@@ -876,10 +909,28 @@
     setStatus(count === 1 ? t('statusPadDeleted') : t('statusPadsDeleted', { count }));
   }
 
+  // Delete the currently selected text object (all its stroke commands). Undo-able.
+  function deleteSelectedText() {
+    if (!state.selectedText) return;
+    const lo = getLayerObj(state.selectedText.layerId);
+    if (!lo) return;
+    if (!confirm(t('confirmDeleteText'))) return;
+
+    snapshotLayer(lo);
+    Gerber.removeText(lo.layer, state.selectedText.textId);
+    lo.dirty = true;
+    clearSelection();
+    updateUndoRedoButtons();
+    renderLayerList();
+    renderAll();
+    setStatus(t('statusTextDeleted'));
+  }
+
   window.addEventListener('keydown', (e) => {
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+    if (state.selectedText) { e.preventDefault(); deleteSelectedText(); return; }
     if (!state.selected || state.selected.flashes.size === 0) return;
     e.preventDefault();
     deleteSelectedFlashes();
@@ -1042,10 +1093,64 @@
     setStatus(t('statusTextCreated', { x: xMm.toFixed(3), y: yMm.toFixed(3) }));
   }
 
+  // Edit form for an existing text object (selected by clicking it on the canvas). Applying
+  // regenerates its strokes from scratch (remove old, add new), which is why the resulting
+  // command gets a new textId - state.selectedText is updated to follow it.
+  function renderTextEditForm() {
+    const lo = getLayerObj(state.selectedText.layerId);
+    const tx = lo && lo.layer.texts[state.selectedText.textId];
+    if (!tx) { state.selectedText = null; renderInspector(); return; }
+
+    inspectorBody.innerHTML = `
+      <div class="field"><label>${t('layerLabel')}</label><input value="${escapeHtml(lo.name)}" disabled></div>
+      <div class="field"><label>${t('textContentLabel')}</label><input id="fEditTextContent" type="text" value="${escapeHtml(tx.text)}"></div>
+      <div class="field-row">
+        <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fEditTextHeight" type="number" step="0.1" value="${tx.height}"></div>
+        <div class="field"><label>${t('strokeWidthLabel', { unit: 'mm' })}</label><input id="fEditTextStroke" type="number" step="0.01" value="${(+tx.strokeWidth).toFixed(3)}"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fEditTextX" type="number" step="0.01" value="${tx.x}"></div>
+        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fEditTextY" type="number" step="0.01" value="${tx.y}"></div>
+      </div>
+      <button class="primary" id="btnApplyText" style="width:100%;margin-top:6px;">${t('applyBtn')}</button>
+      <button id="btnDeselectText" style="width:100%;margin-top:6px;">${t('deselectBtn')}</button>
+      <button id="btnDeleteText" class="danger" style="width:100%;margin-top:6px;">${t('deleteTextBtn')}</button>
+    `;
+
+    document.getElementById('btnApplyText').addEventListener('click', () => {
+      const newText = document.getElementById('fEditTextContent').value;
+      const newHeight = parseFloat(document.getElementById('fEditTextHeight').value);
+      const strokeStr = document.getElementById('fEditTextStroke').value.trim();
+      const newX = parseFloat(document.getElementById('fEditTextX').value);
+      const newY = parseFloat(document.getElementById('fEditTextY').value);
+      if (!newText || !newText.trim()) { alert(t('alertEmptyText')); return; }
+      if (isNaN(newHeight) || newHeight <= 0) { alert(t('alertInvalidHeight')); return; }
+      let strokeWidth = null;
+      if (strokeStr !== '') {
+        strokeWidth = parseFloat(strokeStr);
+        if (isNaN(strokeWidth) || strokeWidth <= 0) { alert(t('alertInvalidStrokeWidth')); return; }
+      }
+      if (isNaN(newX) || isNaN(newY)) { alert(t('alertInvalidPosition')); return; }
+
+      snapshotLayer(lo);
+      const result = Gerber.editText(lo.layer, tx.id, newText, newX, newY, newHeight, strokeWidth);
+      lo.dirty = true;
+      state.selectedText = { layerId: lo.id, textId: result.id };
+      updateUndoRedoButtons();
+      renderLayerList();
+      renderInspector();
+      renderAll();
+      setStatus(t('statusTextUpdated'));
+    });
+    document.getElementById('btnDeselectText').addEventListener('click', () => { clearSelection(); renderAll(); });
+    document.getElementById('btnDeleteText').addEventListener('click', deleteSelectedText);
+  }
+
   // ---------- Inspector ----------
   function renderInspector() {
     if (state.addingText) { renderAddTextForm(); return; }
     if (state.addingPad) { renderAddPadForm(); return; }
+    if (state.selectedText) { renderTextEditForm(); return; }
     if (!state.selected || state.selected.flashes.size === 0) {
       inspectorBody.innerHTML = '<div class="empty-state">' + t('inspectorEmptyNoSelection') + '</div>';
       return;
@@ -1322,6 +1427,24 @@
       }
     }
 
+    // draw the selected text object's bounding box, if any
+    if (state.selectedText) {
+      const lo = getLayerObj(state.selectedText.layerId);
+      const tx = lo && lo.layer.texts[state.selectedText.textId];
+      if (lo && lo.visible !== false && tx) {
+        const p0 = toScreen(tx.x, tx.y);
+        const p1 = toScreen(tx.x + tx.width, tx.y + tx.height);
+        const rx = Math.min(p0.x, p1.x) - 4, ry = Math.min(p0.y, p1.y) - 4;
+        const rw = Math.abs(p1.x - p0.x) + 8, rh = Math.abs(p1.y - p0.y) + 8;
+        ctx.save();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(rx, ry, rw, rh);
+        ctx.restore();
+      }
+    }
+
     // draw the live marquee (shift-drag selection box)
     if (state.marquee) {
       const m = state.marquee;
@@ -1556,7 +1679,8 @@
       getActiveLayer, getLayerObj, resizeCanvas, undo, redo, snapshotLayer,
       deleteSelectedFlashes, selectAllSameSize, updateHud,
       attemptCreatePad, readAddPadDraftFromForm,
-      attemptCreateText, readAddTextDraftFromForm
+      attemptCreateText, readAddTextDraftFromForm,
+      hitTestText, deleteSelectedText
     };
   }
 })();
