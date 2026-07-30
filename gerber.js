@@ -1,0 +1,478 @@
+/*
+ * gerber.js - minimaler RS-274X Gerber Parser/Writer
+ * Unterstützt: %FS %MO %AD (C,R,O + Makro-Passthrough) %AM %LP und andere Extended-Commands (passthrough)
+ *              G-Codes (G01/G02/G03/G36/G37/G74/G75/G04...), D-Code Aperturauswahl, D01/D02/D03 Operationen
+ * Ziel: Pads (D03 Flashes mit Standard-Apertur C/R/O) selektier- und editierbar machen (Position + Größe),
+ *       Datei danach wieder als gültiges Gerber exportieren, ohne andere Inhalte zu verändern.
+ */
+(function (global) {
+  'use strict';
+
+  function parseGerber(text) {
+    const layer = {
+      units: 'MM',            // 'MM' | 'IN'
+      fs: { zeroOmission: 'L', mode: 'A', xInt: 3, xDec: 4, yInt: 3, yDec: 4 },
+      apertures: {},          // dcode -> {shape, params:[...], macroName, raw, holeRaw}
+      commands: [],           // ordered statements, see below
+      maxDcode: 9
+    };
+
+    const stmts = tokenize(text);
+
+    let curX = 0, curY = 0;      // current point, in real units (mm/inch), resolved
+    let curAperture = null;      // currently selected aperture dcode
+    let curPolarity = 'D';       // D = dark, C = clear
+    let inRegion = false;
+    let curGMode = 1;            // 1=linear, 2=cw arc, 3=ccw arc (modal)
+    let curQuad = 'single';      // 'single' (G74) | 'multi' (G75)
+
+    for (const s of stmts) {
+      if (s.extended) {
+        const body = s.raw; // content without leading/trailing %
+        const parsed = parseExtended(body);
+        if (parsed.kind === 'FS') {
+          layer.fs = parsed.fs;
+          layer.commands.push({ type: 'fs', raw: s.raw });
+        } else if (parsed.kind === 'MO') {
+          layer.units = parsed.unit;
+          layer.commands.push({ type: 'mo', raw: s.raw });
+        } else if (parsed.kind === 'AD') {
+          layer.apertures[parsed.dcode] = {
+            shape: parsed.shape,
+            params: parsed.params,
+            macroName: parsed.macroName || null,
+            raw: s.raw
+          };
+          if (parsed.dcode > layer.maxDcode) layer.maxDcode = parsed.dcode;
+          layer.commands.push({ type: 'ad', raw: s.raw, dcode: parsed.dcode });
+        } else if (parsed.kind === 'LP') {
+          curPolarity = parsed.polarity;
+          layer.commands.push({ type: 'lp', raw: s.raw, polarity: parsed.polarity });
+        } else {
+          layer.commands.push({ type: 'extended', raw: s.raw });
+        }
+        continue;
+      }
+
+      const raw = s.raw;
+
+      // standalone aperture select: D<n>, n>=10. Some (older/legacy, e.g. Sprint-Layout)
+      // exporters prefix this with the obsolete "G54"/"G55" prepare-for-tool-selection code,
+      // e.g. "G54D10*" - G54/G55 themselves are no-ops, only the D-code matters.
+      let m = /^(?:G5[45])?D(\d+)$/.exec(raw);
+      if (m && parseInt(m[1], 10) >= 10) {
+        curAperture = parseInt(m[1], 10);
+        layer.commands.push({ type: 'aselect', raw, dcode: curAperture });
+        continue;
+      }
+
+      // pure G-code without coordinates (mode set) e.g. G01, G36, G37, G74, G75, G04 comment handled separately
+      m = /^G0?4(.*)$/.exec(raw);
+      if (m) {
+        layer.commands.push({ type: 'comment', raw });
+        continue;
+      }
+      m = /^G(\d{1,2})$/.exec(raw);
+      if (m) {
+        const code = parseInt(m[1], 10);
+        if (code === 36) inRegion = true;
+        if (code === 37) inRegion = false;
+        if (code === 1 || code === 2 || code === 3) curGMode = code;
+        if (code === 74) curQuad = 'single';
+        if (code === 75) curQuad = 'multi';
+        layer.commands.push({ type: 'gcode', raw, code });
+        continue;
+      }
+
+      if (/^M0?[012]$/.test(raw)) {
+        layer.commands.push({ type: 'mcode', raw });
+        continue;
+      }
+
+      // combined operation block: optional G, X, Y, I, J, then D01/D02/D03
+      m = /^(?:G(\d{1,2}))?(?:X(-?\d+))?(?:Y(-?\d+))?(?:I(-?\d+))?(?:J(-?\d+))?D0?([123])$/.exec(raw);
+      if (m) {
+        const gcode = m[1] !== undefined ? parseInt(m[1], 10) : null;
+        if (gcode === 36) inRegion = true;
+        if (gcode === 37) inRegion = false;
+        if (gcode === 1 || gcode === 2 || gcode === 3) curGMode = gcode;
+        const hasX = m[2] !== undefined, hasY = m[3] !== undefined;
+        const hasI = m[4] !== undefined, hasJ = m[5] !== undefined;
+        const xVal = hasX ? intToReal(m[2], layer.fs.xDec) : curX;
+        const yVal = hasY ? intToReal(m[3], layer.fs.yDec) : curY;
+        const iVal = hasI ? intToReal(m[4], layer.fs.xDec) : 0;
+        const jVal = hasJ ? intToReal(m[5], layer.fs.yDec) : 0;
+        const op = 'D0' + m[6];
+        const stmt = {
+          type: 'op', raw, op, gcode,
+          x: xVal, y: yVal, i: iVal, j: jVal,
+          hasX, hasY, hasI, hasJ,
+          prevX: curX, prevY: curY,
+          dcode: curAperture,
+          polarity: curPolarity,
+          region: inRegion && op !== 'D03',
+          gmode: curGMode,
+          quad: curQuad
+        };
+        curX = xVal; curY = yVal;
+        layer.commands.push(stmt);
+        continue;
+      }
+
+      // unknown/unsupported statement -> passthrough
+      layer.commands.push({ type: 'raw', raw });
+    }
+
+    return layer;
+  }
+
+  function tokenize(text) {
+    const out = [];
+    let i = 0;
+    const n = text.length;
+    while (i < n) {
+      const c = text[i];
+      if (c === '\r' || c === '\n' || c === ' ' || c === '\t') { i++; continue; }
+      if (c === '%') {
+        const end = text.indexOf('%', i + 1);
+        if (end === -1) { i = n; break; }
+        let body = text.slice(i + 1, end).replace(/\s+$/, '');
+        // strip trailing * inside the extended command, keep inner structure for AM blocks
+        if (body.endsWith('*')) body = body.slice(0, -1);
+        out.push({ extended: true, raw: body });
+        i = end + 1;
+        continue;
+      }
+      const star = text.indexOf('*', i);
+      if (star === -1) { i = n; break; }
+      const raw = text.slice(i, star).replace(/\s+/g, '');
+      if (raw.length > 0) out.push({ extended: false, raw });
+      i = star + 1;
+    }
+    return out;
+  }
+
+  function intToReal(intStr, decDigits) {
+    const neg = intStr.startsWith('-');
+    const digits = neg ? intStr.slice(1) : intStr;
+    const val = parseInt(digits, 10) / Math.pow(10, decDigits);
+    return neg ? -val : val;
+  }
+
+  function realToIntStr(value, decDigits) {
+    let v = Math.round(value * Math.pow(10, decDigits));
+    return String(v);
+  }
+
+  function parseExtended(body) {
+    let m;
+    if ((m = /^FS([LT])([AI])X(\d)(\d)Y(\d)(\d)$/.exec(body))) {
+      return { kind: 'FS', fs: { zeroOmission: m[1], mode: m[2], xInt: +m[3], xDec: +m[4], yInt: +m[5], yDec: +m[6] } };
+    }
+    if ((m = /^MO(MM|IN)$/.exec(body))) {
+      return { kind: 'MO', unit: m[1] };
+    }
+    if ((m = /^ADD(\d+)([A-Za-z_$][A-Za-z0-9_]*)(?:,([^*]*))?$/.exec(body))) {
+      const dcode = parseInt(m[1], 10);
+      const shapeToken = m[2];
+      const paramStr = m[3] || '';
+      if (shapeToken === 'C' || shapeToken === 'R' || shapeToken === 'O') {
+        const params = paramStr.split('X').map(p => parseFloat(p)).filter(v => !isNaN(v));
+        return { kind: 'AD', dcode, shape: shapeToken, params };
+      }
+      // Polygon or macro aperture -> passthrough, keep raw params for potential future use
+      return { kind: 'AD', dcode, shape: shapeToken === 'P' ? 'P' : 'MACRO', params: [], macroName: shapeToken };
+    }
+    if ((m = /^LP([DC])$/.exec(body))) {
+      return { kind: 'LP', polarity: m[1] };
+    }
+    return { kind: 'OTHER' };
+  }
+
+  // ---- Writer ----
+
+  function layerToText(layer) {
+    const lines = [];
+    for (const cmd of layer.commands) {
+      switch (cmd.type) {
+        case 'fs':
+        case 'mo':
+        case 'ad':
+        case 'lp':
+        case 'extended':
+          lines.push('%' + cmd.raw + '*%');
+          break;
+        case 'aselect':
+          lines.push(cmd.raw + '*');
+          break;
+        case 'gcode':
+        case 'mcode':
+        case 'comment':
+        case 'raw':
+          lines.push(cmd.raw + '*');
+          break;
+        case 'op':
+          lines.push(cmd.raw + '*');
+          break;
+        default:
+          lines.push(cmd.raw + '*');
+      }
+    }
+    return lines.join('\n') + '\n';
+  }
+
+  // Rebuild the raw text of an 'op' statement from its fields (used after edits)
+  function rebuildOpRaw(stmt, fs) {
+    let s = '';
+    if (stmt.gcode !== null && stmt.gcode !== undefined) {
+      s += 'G' + String(stmt.gcode).padStart(2, '0');
+    }
+    if (stmt.hasX) s += 'X' + realToIntStr(stmt.x, fs.xDec);
+    if (stmt.hasY) s += 'Y' + realToIntStr(stmt.y, fs.yDec);
+    if (stmt.hasI) s += 'I' + realToIntStr(stmt.i, fs.xDec);
+    if (stmt.hasJ) s += 'J' + realToIntStr(stmt.j, fs.yDec);
+    s += stmt.op;
+    return s;
+  }
+
+  function rebuildAdRaw(dcode, shape, params, macroName) {
+    if (shape === 'C' || shape === 'R' || shape === 'O') {
+      return 'ADD' + dcode + shape + ',' + params.map(p => trimNum(p)).join('X');
+    }
+    // macro/polygon apertures aren't reconstructed from params (opaque) - caller should not hit this path
+    return 'ADD' + dcode + (macroName || shape);
+  }
+
+  function trimNum(n) {
+    // avoid float artifacts like 0.30000000000000004
+    let s = n.toFixed(6);
+    s = s.replace(/0+$/, '').replace(/\.$/, '.0');
+    if (s.indexOf('.') === -1) s += '.0';
+    return s;
+  }
+
+  // ---- Editing helpers ----
+
+  function getFlashes(layer) {
+    return layer.commands.filter(c => c.type === 'op' && c.op === 'D03');
+  }
+
+  function toFileUnits(layer, mm) {
+    return layer.units === 'IN' ? mm / 25.4 : mm;
+  }
+  function toMm(layer, val) {
+    return layer.units === 'IN' ? val * 25.4 : val;
+  }
+
+  // Some Gerber exporters omit X and/or Y on a command when it's unchanged from the current
+  // point, e.g. "Y2000D03*" reuses the last X. If we then move an earlier command that feeds
+  // that point, every command inheriting from it would silently shift too - even if the user
+  // never selected it. To prevent that, freeze every downstream command that would otherwise
+  // inherit the axis we're about to change: bake its current (unchanged) resolved coordinate
+  // into its own raw text so it becomes independent of whatever happens upstream.
+  function freezeDownstreamImplicitCoords(layer, fromIndex) {
+    let xDone = false, yDone = false;
+    for (let i = fromIndex + 1; i < layer.commands.length && !(xDone && yDone); i++) {
+      const c = layer.commands[i];
+      if (c.type !== 'op') continue;
+      let changed = false;
+      if (!xDone) { if (c.hasX) xDone = true; else { c.hasX = true; changed = true; } }
+      if (!yDone) { if (c.hasY) yDone = true; else { c.hasY = true; changed = true; } }
+      if (changed) c.raw = rebuildOpRaw(c, layer.fs);
+    }
+  }
+
+  // Move a flash to a new position given in millimeters
+  function setFlashPosition(layer, flashCmd, xMm, yMm) {
+    const x = toFileUnits(layer, xMm);
+    const y = toFileUnits(layer, yMm);
+    const idx = layer.commands.indexOf(flashCmd);
+    freezeDownstreamImplicitCoords(layer, idx);
+    flashCmd.x = x;
+    flashCmd.y = y;
+    flashCmd.hasX = true;
+    flashCmd.hasY = true;
+    flashCmd.raw = rebuildOpRaw(flashCmd, layer.fs);
+  }
+
+  // Remove one or more flashes (pads) from the layer entirely. A D03 flash also advances the
+  // "current point", so - same reasoning as setFlashPosition - any downstream command that
+  // omits X/Y and would have inherited its position from a deleted flash is frozen (its
+  // resolved coordinate baked into its own raw text) first, so deleting a pad never silently
+  // shifts some other, unrelated command that happened to come after it.
+  function removeFlashes(layer, flashCmds) {
+    let removed = 0;
+    flashCmds.forEach(f => {
+      const idx = layer.commands.indexOf(f);
+      if (idx === -1) return;
+      freezeDownstreamImplicitCoords(layer, idx);
+      layer.commands.splice(idx, 1);
+      removed++;
+    });
+    return removed;
+  }
+
+  // Find an existing aperture definition with the given shape and params (within EPS), if any -
+  // used by addFlash so placing several new pads of the same size reuses one AD line.
+  function findMatchingAperture(layer, shape, params) {
+    const EPS = 1e-6;
+    for (const key in layer.apertures) {
+      const ap = layer.apertures[key];
+      if (ap.shape !== shape || ap.params.length !== params.length) continue;
+      if (ap.params.every((v, i) => Math.abs(v - params[i]) < EPS)) return parseInt(key, 10);
+    }
+    return null;
+  }
+
+  // Add a brand-new flash (pad) to the layer at the given position. xMm/yMm and params are in
+  // millimeters/inches matching the layer's own units (same convention as setFlashesSize/
+  // apertureExtents). Reuses a matching existing aperture if one exists, otherwise defines a new
+  // one. The new AD/aselect/flash are inserted right before any trailing M00/M02 at the end of
+  // the command stream, so nothing downstream could ever inherit its coordinates.
+  function addFlash(layer, shape, params, xMm, yMm) {
+    if (shape !== 'C' && shape !== 'R' && shape !== 'O') {
+      throw new Error('Unsupported aperture shape: ' + shape);
+    }
+    const x = toFileUnits(layer, xMm);
+    const y = toFileUnits(layer, yMm);
+
+    let dcode = findMatchingAperture(layer, shape, params);
+    let insertIdx = layer.commands.length;
+    while (insertIdx > 0 && layer.commands[insertIdx - 1].type === 'mcode') insertIdx--;
+
+    if (dcode === null) {
+      dcode = layer.maxDcode + 1;
+      layer.maxDcode = dcode;
+      const raw = rebuildAdRaw(dcode, shape, params, null);
+      layer.apertures[dcode] = { shape, params, macroName: null, raw };
+      let adInsertAt = 0;
+      for (let i = 0; i < layer.commands.length; i++) {
+        if (layer.commands[i].type === 'ad') adInsertAt = i + 1;
+      }
+      layer.commands.splice(adInsertAt, 0, { type: 'ad', raw, dcode });
+      if (adInsertAt <= insertIdx) insertIdx++;
+    }
+
+    layer.commands.splice(insertIdx, 0, { type: 'aselect', raw: 'D' + dcode, dcode });
+    insertIdx++;
+
+    const flashCmd = {
+      type: 'op', raw: '', op: 'D03', gcode: null,
+      x, y, i: 0, j: 0,
+      hasX: true, hasY: true, hasI: false, hasJ: false,
+      prevX: x, prevY: y,
+      dcode, polarity: 'D',
+      region: false, gmode: 1, quad: 'single'
+    };
+    flashCmd.raw = rebuildOpRaw(flashCmd, layer.fs);
+    layer.commands.splice(insertIdx, 0, flashCmd);
+
+    return flashCmd;
+  }
+
+  // Change the size of one or more flashes at once. newParams are in the layer's native units
+  // already (mm or inch, matching aperture definition convention), e.g. [diameter] for C, [w,h]
+  // for R/O. Flashes are grouped by their current aperture: if every flash using a given aperture
+  // is included in flashCmds, that aperture definition is simply edited in place; otherwise a
+  // single new aperture is cloned and shared by every flash in the group (so a batch resize of
+  // 50 pads that share one aperture produces one new AD line, not fifty).
+  function setFlashesSize(layer, flashCmds, newParams) {
+    const byDcode = new Map();
+    flashCmds.forEach(f => {
+      if (!byDcode.has(f.dcode)) byDcode.set(f.dcode, []);
+      byDcode.get(f.dcode).push(f);
+    });
+
+    const results = new Map(); // original dcode -> resulting dcode
+
+    byDcode.forEach((group, dcode) => {
+      const ap = layer.apertures[dcode];
+      if (!ap || (ap.shape !== 'C' && ap.shape !== 'R' && ap.shape !== 'O')) {
+        return; // skip non-editable (macro/polygon) apertures, leave those flashes untouched
+      }
+
+      const totalUsage = getFlashes(layer).filter(f => f.dcode === dcode).length;
+
+      if (group.length >= totalUsage) {
+        ap.params = newParams;
+        ap.raw = rebuildAdRaw(dcode, ap.shape, newParams, ap.macroName);
+        const adCmd = layer.commands.find(c => c.type === 'ad' && c.dcode === dcode);
+        if (adCmd) adCmd.raw = ap.raw;
+        results.set(dcode, dcode);
+        return;
+      }
+
+      const newDcode = layer.maxDcode + 1;
+      layer.maxDcode = newDcode;
+      const newAp = { shape: ap.shape, params: newParams, macroName: ap.macroName, raw: rebuildAdRaw(newDcode, ap.shape, newParams, ap.macroName) };
+      layer.apertures[newDcode] = newAp;
+
+      let insertAt = 0;
+      for (let i = 0; i < layer.commands.length; i++) {
+        if (layer.commands[i].type === 'ad') insertAt = i + 1;
+      }
+      layer.commands.splice(insertAt, 0, { type: 'ad', raw: newAp.raw, dcode: newDcode });
+
+      group.forEach(flashCmd => {
+        let flashIndex = layer.commands.indexOf(flashCmd);
+        layer.commands.splice(flashIndex, 0, { type: 'aselect', raw: 'D' + newDcode, dcode: newDcode });
+        flashIndex = layer.commands.indexOf(flashCmd);
+        flashCmd.dcode = newDcode;
+        layer.commands.splice(flashIndex + 1, 0, { type: 'aselect', raw: 'D' + dcode, dcode: dcode });
+      });
+      results.set(dcode, newDcode);
+    });
+
+    return results;
+  }
+
+  // Change the size of a single flash's aperture. Convenience wrapper around setFlashesSize.
+  function setFlashSize(layer, flashCmd, newParams) {
+    const ap = layer.apertures[flashCmd.dcode];
+    if (!ap) throw new Error('Unknown aperture D' + flashCmd.dcode);
+    if (ap.shape !== 'C' && ap.shape !== 'R' && ap.shape !== 'O') {
+      throw new Error('Aperture shape ' + ap.shape + ' is not editable (macro/polygon)');
+    }
+    setFlashesSize(layer, [flashCmd], newParams);
+    return flashCmd.dcode;
+  }
+
+  // Bounding box (half-width/half-height in native units) for a given aperture, used for
+  // rendering + hit-testing. Falls back to a small dot for macro/polygon apertures.
+  function apertureExtents(ap) {
+    if (!ap) return { hw: 0.15, hh: 0.15, shape: 'C' };
+    if (ap.shape === 'C') {
+      const d = ap.params[0] || 0.3;
+      return { hw: d / 2, hh: d / 2, shape: 'C', diameter: d };
+    }
+    if (ap.shape === 'R' || ap.shape === 'O') {
+      const w = ap.params[0] || 0.3;
+      const h = ap.params[1] || 0.3;
+      return { hw: w / 2, hh: h / 2, shape: ap.shape, w, h };
+    }
+    return { hw: 0.2, hh: 0.2, shape: 'MACRO' };
+  }
+
+  global.Gerber = {
+    parseGerber,
+    layerToText,
+    rebuildOpRaw,
+    rebuildAdRaw,
+    intToReal,
+    realToIntStr,
+    trimNum,
+    getFlashes,
+    setFlashPosition,
+    setFlashSize,
+    setFlashesSize,
+    removeFlashes,
+    addFlash,
+    apertureExtents,
+    toMm,
+    toFileUnits
+  };
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = global.Gerber;
+  }
+})(typeof window !== 'undefined' ? window : globalThis);

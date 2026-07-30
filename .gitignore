@@ -1,0 +1,4 @@
+.DS_Store
+*.log
+_test_real_tmp.gbr
+.claude/

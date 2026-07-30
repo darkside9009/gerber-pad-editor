@@ -1,0 +1,74 @@
+# Gerber Pad Editor
+
+A lightweight, browser-based editor for inspecting and editing pads (flashes) in Gerber (RS-274X) PCB layer files — no upload, no install, no build step. Everything runs locally in your browser as plain HTML/CSS/JS.
+
+Load one or more Gerber layers, click on any pad to move it or resize it, batch-edit pads that share the same size, measure distances, set a custom reference origin, draw brand-new pads, and export clean, valid Gerber back out — all through a fast canvas-based UI.
+
+![Overview](docs/screenshot-overview.png)
+
+## Features
+
+- **Multi-layer viewer** — load several Gerber files at once, each rendered in its own color, toggle visibility, pick the active (editable) layer.
+- **Pad selection & editing** — click a pad to see its layer, aperture, position and size; edit X/Y and diameter/width/height directly.
+- **Batch selection**
+  - Select every pad that shares the same size as the current one.
+  - Narrow that down further to pads that also share the same **X axis** or **Y axis** position (i.e. the same column or row) — handy for aligned connectors, headers, or via arrays.
+  - Shift+click to add/remove pads, Shift+drag for a box (marquee) selection.
+- **Multi-pad batch operations** — move a whole selection by a Δx/Δy offset and/or unify the size of every circular and/or rectangular/oval pad in the selection at once, in a single edit.
+- **Draw new pads** — pick circle or rectangle, enter diameter or width/height, then either click a spot on the canvas or type exact X/Y coordinates to place it. Reuses an existing aperture definition automatically if one with the same shape/size already exists.
+- **Custom origin ("Nullpunkt")** — click any point on the canvas to set it as a temporary (0,0) reference; a live HUD shows the mouse position relative to it.
+- **Measure tool** — click two points to get the distance (and dx/dy) between them, drawn live on the canvas.
+- **Undo/redo** per layer (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z), with a full edit history.
+- **Export** — download a single edited layer, or all loaded layers bundled as a ZIP. Output is byte-for-byte valid Gerber, preserving everything the editor didn't touch (comments, macros, other extended commands, legacy `G54`/`G55` D-code prefixes, implicit-coordinate chains, etc.).
+- **Bilingual UI** — switch between German and English at any time; your choice is remembered.
+
+## Screenshots
+
+| Pad inspector & same-size selection | Batch-selected pads |
+|---|---|
+| ![Pad inspector](docs/screenshot-pad-inspector.png) | ![Multi-select](docs/screenshot-multi-select.png) |
+
+| Measure tool | Draw a new pad |
+|---|---|
+| ![Measure](docs/screenshot-measure.png) | ![Add pad](docs/screenshot-add-pad.png) |
+
+| English UI |
+|---|
+| ![English](docs/screenshot-english.png) |
+
+## Getting started
+
+No build, no dependencies, no server required.
+
+```bash
+git clone https://github.com/<your-username>/gerber-pad-editor.git
+cd gerber-pad-editor
+open index.html   # or just double-click index.html
+```
+
+Then click **Load layer…** and pick one or more Gerber files (any extension — the file is validated by parsing it, not by its name).
+
+## Supported Gerber subset
+
+This is a focused pad editor, not a full RS-274X renderer. It understands:
+
+- `%FS…%`, `%MO…%` (format spec, units)
+- `%ADD…%` for `C` (circle), `R` (rectangle) and `O` (obround/oval) apertures — these are the shapes you can edit; macro (`%AM…%`) and polygon apertures are rendered and can be moved, but their size isn't editable here
+- `%LP…%` polarity, `G36`/`G37` regions, `G01`/`G02`/`G03` draw/arc modes, `D01`/`D02`/`D03` operations
+- Legacy `G54`/`G55` aperture-select prefixes and Gerber's "inherit the last X or Y" shorthand
+
+Everything else (other extended commands, comments, unsupported statements) is preserved as opaque passthrough and written back unchanged.
+
+## Project structure
+
+```
+index.html    UI layout
+style.css     Dark UI theme
+gerber.js     Gerber parser, writer and pad-editing primitives (no DOM dependency)
+app.js        Application state, canvas rendering, UI wiring, i18n
+zip.js        Minimal ZIP writer for the "download all" export
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

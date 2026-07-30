@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title data-i18n="appTitle">Gerber Pad Editor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div class="title" data-i18n="appTitle">Gerber Pad Editor</div>
+    <label class="file-btn">
+      <span data-i18n="loadLayer">Layer laden…</span>
+      <input id="fileInput" type="file" multiple style="display:none">
+    </label>
+    <button id="btnFit" data-i18n="fitView">Ansicht anpassen</button>
+    <button id="btnZoomIn">+</button>
+    <button id="btnZoomOut">−</button>
+    <button id="btnUndo" data-i18n="undoBtn" data-i18n-title="undoTitle" title="Rückgängig (Strg/Cmd+Z)" disabled>↶ Rückgängig</button>
+    <button id="btnRedo" data-i18n="redoBtn" data-i18n-title="redoTitle" title="Wiederholen (Strg/Cmd+Shift+Z)" disabled>↷ Wiederholen</button>
+    <button id="btnSetOrigin" data-i18n="setOriginBtn" data-i18n-title="setOriginTitle" title="Klicke danach auf einen Punkt im Canvas, um ihn als Nullpunkt für HUD und Messfunktion festzulegen (Esc = abbrechen)">Nullpunkt setzen</button>
+    <button id="btnResetOrigin" data-i18n-title="resetOriginTitle" title="Nullpunkt auf Datei-Ursprung (0,0) zurücksetzen">↺ 0,0</button>
+    <button id="btnMeasure" data-i18n="measureBtn" data-i18n-title="measureTitle" title="Distanz zwischen zwei Punkten messen (Esc = beenden)">Messen</button>
+    <button id="btnAddPad" data-i18n-title="addPadTitle" title="Neues Pad (Kreis/Rechteck) zeichnen und platzieren (Esc = beenden)">+ Pad</button>
+    <select id="langSelect" title="Sprache / Language">
+      <option value="de">Deutsch</option>
+      <option value="en">English</option>
+    </select>
+    <div class="spacer"></div>
+    <button id="btnDownloadZip" data-i18n="downloadZipBtn" disabled>Alle als ZIP herunterladen</button>
+  </div>
+
+  <div id="layers">
+    <h3 data-i18n="layersHeading">Layer</h3>
+    <div id="layerList"></div>
+  </div>
+
+  <div id="canvas-wrap">
+    <canvas id="gcanvas"></canvas>
+    <div id="hud"></div>
+    <div id="hint" data-i18n="hintText">Scrollen = Zoom · Ziehen = Verschieben · Klick = Pad wählen · Shift+Klick = Mehrfachauswahl · Shift+Ziehen = Rahmenauswahl · Entf = Löschen · Esc = Nullpunkt/Messen abbrechen</div>
+  </div>
+
+  <div id="inspector">
+    <h3 data-i18n="inspectorHeading">Pad-Eigenschaften</h3>
+    <div id="inspectorBody"></div>
+  </div>
+
+  <div id="status"></div>
+</div>
+
+<script src="gerber.js"></script>
+<script src="zip.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
