@@ -79,6 +79,11 @@
       statusTextUpdated: 'Text aktualisiert.',
       confirmDeleteText: 'Diesen Text löschen?',
       statusTextDeleted: 'Text gelöscht.',
+      lockBtn: 'Sperren',
+      unlockBtn: 'Entsperren',
+      lockTitle: 'Gesperrte Pads/Texte lassen sich nicht per Maus verschieben (Ziehen). X/Y-Eingabe funktioniert immer, unabhängig vom Sperrstatus.',
+      statusLocked: 'Gesperrt.',
+      statusUnlocked: 'Entsperrt.',
       inspectorEmptyNoSelection: 'Kein Pad ausgewählt. Wähle zuerst links den zu bearbeitenden Layer aus (aktiv) und klicke dann im Canvas auf ein Pad.<br><br>Shift+Klick = Pad zur Auswahl hinzufügen/entfernen.<br>Shift+Ziehen = mehrere Pads mit einem Rahmen auswählen.',
       layerLabel: 'Layer',
       apertureLabel: 'Apertur',
@@ -182,6 +187,11 @@
       statusTextUpdated: 'Text updated.',
       confirmDeleteText: 'Delete this text?',
       statusTextDeleted: 'Text deleted.',
+      lockBtn: 'Lock',
+      unlockBtn: 'Unlock',
+      lockTitle: "Locked pads/text can't be moved by dragging with the mouse. Typing X/Y always works, regardless of the lock state.",
+      statusLocked: 'Locked.',
+      statusUnlocked: 'Unlocked.',
       inspectorEmptyNoSelection: 'No pad selected. First select the layer to edit on the left (active), then click a pad on the canvas.<br><br>Shift+Click = add/remove pad from selection.<br>Shift+Drag = select multiple pads with a box.',
       layerLabel: 'Layer',
       apertureLabel: 'Aperture',
@@ -734,10 +744,10 @@
     if (!lo) return null;
     if (state.selected && state.selected.flashes.size === 1) {
       const flash = Array.from(state.selected.flashes)[0];
-      if (hitTestFlash(lo, world) === flash) return { type: 'pad', lo, flash };
+      if (!flash.locked && hitTestFlash(lo, world) === flash) return { type: 'pad', lo, flash };
     } else if (state.selectedText && state.selectedText.layerId === lo.id) {
       const tx = lo.layer.texts[state.selectedText.textId];
-      if (tx && hitTestText(lo, world) === tx.id) return { type: 'text', lo, tx };
+      if (tx && !tx.locked && hitTestText(lo, world) === tx.id) return { type: 'text', lo, tx };
     }
     return null;
   }
@@ -1221,6 +1231,7 @@
         <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fEditTextY" type="number" step="0.001" value="${tx.y}"></div>
       </div>
       <button class="primary" id="btnApplyText" style="width:100%;margin-top:6px;">${t('applyBtn')}</button>
+      <button id="btnToggleLockText" title="${t('lockTitle')}" style="width:100%;margin-top:6px;">${tx.locked ? t('unlockBtn') : t('lockBtn')}</button>
       <button id="btnDeselectText" style="width:100%;margin-top:6px;">${t('deselectBtn')}</button>
       <button id="btnDeleteText" class="danger" style="width:100%;margin-top:6px;">${t('deleteTextBtn')}</button>
     `;
@@ -1254,6 +1265,15 @@
       renderInspector();
       renderAll();
       setStatus(t('statusTextUpdated'));
+    });
+    document.getElementById('btnToggleLockText').addEventListener('click', () => {
+      snapshotLayer(lo);
+      tx.locked = !tx.locked;
+      lo.dirty = true;
+      updateUndoRedoButtons();
+      renderLayerList();
+      renderInspector();
+      setStatus(tx.locked ? t('statusLocked') : t('statusUnlocked'));
     });
     document.getElementById('btnDeselectText').addEventListener('click', () => { clearSelection(); renderAll(); });
     document.getElementById('btnDeleteText').addEventListener('click', deleteSelectedText);
@@ -1309,6 +1329,7 @@
       </div>
       ${sizeFieldsHtml}
       <button class="primary" id="btnApply" style="width:100%;margin-top:6px;">${t('applyBtn')}</button>
+      <button id="btnToggleLock" title="${t('lockTitle')}" style="width:100%;margin-top:6px;">${flash.locked ? t('unlockBtn') : t('lockBtn')}</button>
       ${editable ? `
         <button id="btnSelectSameSize" style="width:100%;margin-top:6px;">${t('selectSameSizeBtn')}</button>
         <button id="btnSelectSameSizeX" style="width:100%;margin-top:6px;">${t('selectSameSizeXBtn')}</button>
@@ -1360,6 +1381,15 @@
       renderInspector();
       renderAll();
       setStatus(t('statusPadUpdated'));
+    });
+    document.getElementById('btnToggleLock').addEventListener('click', () => {
+      snapshotLayer(lo);
+      flash.locked = !flash.locked;
+      lo.dirty = true;
+      updateUndoRedoButtons();
+      renderLayerList();
+      renderInspector();
+      setStatus(flash.locked ? t('statusLocked') : t('statusUnlocked'));
     });
     document.getElementById('btnDeselect').addEventListener('click', () => { clearSelection(); renderAll(); });
     document.getElementById('btnDeleteFlash').addEventListener('click', deleteSelectedFlashes);

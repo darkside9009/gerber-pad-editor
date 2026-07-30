@@ -12,6 +12,7 @@ Load one or more Gerber layers, click on any pad to move it or resize it, batch-
 
 - **Multi-layer viewer** — load several Gerber files at once, each rendered in its own color, toggle visibility, pick the active (editable) layer.
 - **Pad selection & editing** — click a pad to see its layer, aperture, position and size; edit X/Y and diameter/width/height directly (press Enter to apply), or just drag the selected pad on the canvas to reposition it.
+- **Lock/unlock** — pads already present in a loaded file start locked against accidental mouse-dragging; select one and click "Unlock" to allow dragging it. Newly drawn pads and text start unlocked (so you can immediately nudge them into place) and can be locked once you're happy with their position. Typing X/Y always works regardless of the lock state — locking only affects mouse-dragging.
 - **Batch selection**
   - Select every pad that shares the same size as the current one.
   - Narrow that down further to pads that also share the same **X axis** or **Y axis** position (i.e. the same column or row) — handy for aligned connectors, headers, or via arrays.

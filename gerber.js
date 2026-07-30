@@ -114,7 +114,8 @@
           polarity: curPolarity,
           region: inRegion && op !== 'D03',
           gmode: curGMode,
-          quad: curQuad
+          quad: curQuad,
+          locked: true // pads already present in a loaded file start locked against mouse-drag
         };
         curX = xVal; curY = yVal;
         layer.commands.push(stmt);
@@ -364,7 +365,8 @@
       hasX: true, hasY: true, hasI: false, hasJ: false,
       prevX: x, prevY: y,
       dcode, polarity: 'D',
-      region: false, gmode: 1, quad: 'single'
+      region: false, gmode: 1, quad: 'single',
+      locked: false // freshly placed pads start unlocked so they can be nudged into place
     };
     flashCmd.raw = rebuildOpRaw(flashCmd, layer.fs);
     layer.commands.splice(insertIdx, 0, flashCmd);
@@ -515,7 +517,7 @@
     }
 
     const widthMm = Math.max(0, penX - FONT_LETTER_GAP) * (heightMm / 10);
-    layer.texts[textId] = { id: textId, text, x: xMm, y: yMm, height: heightMm, strokeWidth: strokeW, width: widthMm, dcode };
+    layer.texts[textId] = { id: textId, text, x: xMm, y: yMm, height: heightMm, strokeWidth: strokeW, width: widthMm, dcode, locked: false };
 
     return { id: textId, commands: created, widthMm };
   }
@@ -537,8 +539,11 @@
   // add, so the result gets a NEW textId - callers must update whatever they had selected to the
   // returned id.
   function editText(layer, textId, text, xMm, yMm, heightMm, strokeWidthMm) {
+    const wasLocked = layer.texts[textId] ? layer.texts[textId].locked : false;
     removeText(layer, textId);
-    return addText(layer, text, xMm, yMm, heightMm, strokeWidthMm);
+    const result = addText(layer, text, xMm, yMm, heightMm, strokeWidthMm);
+    layer.texts[result.id].locked = wasLocked;
+    return result;
   }
 
   // Move a text object to an absolute position without regenerating its strokes - just shifts
