@@ -11,7 +11,7 @@ Load one or more Gerber layers, click on any pad to move it or resize it, batch-
 ## Features
 
 - **Multi-layer viewer** — load several Gerber files at once, each rendered in its own color, toggle visibility, pick the active (editable) layer.
-- **Pad selection & editing** — click a pad to see its layer, aperture, position and size; edit X/Y and diameter/width/height directly, or just drag the selected pad on the canvas to reposition it.
+- **Pad selection & editing** — click a pad to see its layer, aperture, position and size; edit X/Y and diameter/width/height directly (press Enter to apply), or just drag the selected pad on the canvas to reposition it.
 - **Batch selection**
   - Select every pad that shares the same size as the current one.
   - Narrow that down further to pads that also share the same **X axis** or **Y axis** position (i.e. the same column or row) — handy for aligned connectors, headers, or via arrays.
@@ -21,6 +21,7 @@ Load one or more Gerber layers, click on any pad to move it or resize it, batch-
 - **Add text** — Gerber has no text primitive, so this generates real vector line-art strokes (exactly like EDA tools do for silkscreen labels) using a built-in stroke font. Type the text, set its height and (optionally) line width, then click a spot on the canvas or type X/Y to place it. Click a placed text again to re-select it and change its content, height, line width or position (either in the form, or by dragging it on the canvas), or delete it — same as editing a pad. (This re-editability is session-only bookkeeping the app keeps on the side; Gerber itself has no concept of "this is one text object", so it's lost on save+reload, same as in any EDA tool's Gerber export.)
 - **Custom origin ("Nullpunkt")** — click any point on the canvas to set it as a temporary (0,0) reference; a live HUD shows the mouse position relative to it.
 - **Measure tool** — click two points to get the distance (and dx/dy) between them, drawn live on the canvas.
+- **Snap grid** — dragging a pad or text on the canvas snaps to a configurable grid (0.1 / 0.25 / 0.5 / 1 mm, picked from the toolbar). Typed X/Y/size values in the forms are never snapped — full precision (0.001 mm steps) always available there.
 - **Undo/redo** per layer (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z), with a full edit history.
 - **Export** — download a single edited layer, or all loaded layers bundled as a ZIP. Output is byte-for-byte valid Gerber, preserving everything the editor didn't touch (comments, macros, other extended commands, legacy `G54`/`G55` D-code prefixes, implicit-coordinate chains, etc.).
 - **Bilingual UI** — switch between German and English at any time; your choice is remembered.

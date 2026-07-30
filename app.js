@@ -20,6 +20,7 @@
       measureTitle: 'Distanz zwischen zwei Punkten messen (Esc = beenden)',
       addPadTitle: 'Neues Pad (Kreis/Rechteck) zeichnen und platzieren (Esc = beenden)',
       addTextTitle: 'Text als Vektor-Strichzeichnung hinzufügen (Esc = beenden)',
+      gridTitle: 'Raster für Verschieben/Platzieren per Maus (Eingabefelder sind davon unabhängig)',
       downloadZipBtn: 'Alle als ZIP herunterladen',
       layersHeading: 'Layer',
       hintText: 'Scrollen = Zoom · Ziehen = Verschieben · Klick = Pad/Text wählen · Ausgewähltes Element ziehen = verschieben · Shift+Klick = Mehrfachauswahl · Shift+Ziehen = Rahmenauswahl · Entf = Löschen · Esc = Nullpunkt/Messen abbrechen',
@@ -122,6 +123,7 @@
       measureTitle: 'Measure the distance between two points (Esc = stop)',
       addPadTitle: 'Draw and place a new pad (circle/rectangle) (Esc = stop)',
       addTextTitle: 'Add text as a vector line-art drawing (Esc = stop)',
+      gridTitle: 'Grid for mouse dragging/placement (form fields are unaffected)',
       downloadZipBtn: 'Download all as ZIP',
       layersHeading: 'Layers',
       hintText: 'Scroll = zoom · Drag = pan · Click = select pad/text · Drag the selected item = move it · Shift+Click = multi-select · Shift+Drag = box select · Del = delete · Esc = cancel origin/measure',
@@ -238,8 +240,11 @@
   }
 
   const savedLang = (typeof localStorage !== 'undefined' && localStorage.getItem('gerberEditLang')) || null;
+  const GRID_SIZES = [0.1, 0.25, 0.5, 1];
+  const savedGrid = (typeof localStorage !== 'undefined' && parseFloat(localStorage.getItem('gerberEditGrid'))) || null;
   const state = {
     lang: (savedLang === 'en' || savedLang === 'de') ? savedLang : 'de',
+    gridSize: GRID_SIZES.includes(savedGrid) ? savedGrid : 0.1, // mm, snap grid for mouse drag/placement
     layers: [],       // {id, name, layer, originalText, color, visible, dirty}
     activeId: null,
     selected: null,   // {layerId, flashes: Set<flashCmd>} or null
@@ -280,6 +285,7 @@
   const btnAddPad = document.getElementById('btnAddPad');
   const btnAddText = document.getElementById('btnAddText');
   const langSelect = document.getElementById('langSelect');
+  const gridSelect = document.getElementById('gridSelect');
   const hud = document.getElementById('hud');
 
   function setStatus(msg) { statusEl.textContent = msg; }
@@ -295,6 +301,19 @@
     updateHud();
     setStatus(t('statusReady'));
   });
+
+  gridSelect.value = String(state.gridSize);
+  gridSelect.addEventListener('change', () => {
+    state.gridSize = parseFloat(gridSelect.value);
+    if (typeof localStorage !== 'undefined') localStorage.setItem('gerberEditGrid', String(state.gridSize));
+  });
+
+  // Snap a position (mm) to the current grid - used for mouse-driven placement/dragging only,
+  // never for values typed into a form field (those stay at full precision).
+  function snapToGrid(mm) {
+    const g = state.gridSize;
+    return g ? Math.round(mm / g) * g : mm;
+  }
 
   // ---------- Undo / Redo (per layer) ----------
   const MAX_HISTORY = 50;
@@ -466,6 +485,18 @@
 
   function escapeHtml(s) {
     return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Pressing Enter in any of these fields triggers the form's primary button, same as clicking it.
+  function onEnterSubmit(fields, button) {
+    fields.forEach(el => {
+      if (!el) return;
+      el.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        button.click();
+      });
+    });
   }
 
   // ---------- Export ----------
@@ -761,8 +792,8 @@
       }
       const rect = canvas.getBoundingClientRect();
       const world = toWorld(e.clientX - rect.left, e.clientY - rect.top);
-      const newX = movingItem.startXMm + (world.x - movingItem.startWorld.x);
-      const newY = movingItem.startYMm + (world.y - movingItem.startWorld.y);
+      const newX = snapToGrid(movingItem.startXMm + (world.x - movingItem.startWorld.x));
+      const newY = snapToGrid(movingItem.startYMm + (world.y - movingItem.startWorld.y));
       if (movingItem.type === 'pad') {
         Gerber.setFlashPosition(movingItem.lo.layer, movingItem.flash, newX, newY);
       } else {
@@ -823,13 +854,13 @@
       if (state.addingPad) {
         const world = toWorld(px, py);
         readAddPadDraftFromForm();
-        attemptCreatePad(world.x, world.y);
+        attemptCreatePad(snapToGrid(world.x), snapToGrid(world.y));
         return;
       }
       if (state.addingText) {
         const world = toWorld(px, py);
         readAddTextDraftFromForm();
-        attemptCreateText(world.x, world.y);
+        attemptCreateText(snapToGrid(world.x), snapToGrid(world.y));
         return;
       }
       handleClick(px, py, e.shiftKey);
@@ -1008,12 +1039,12 @@
     const d = state.addPad;
     let sizeHtml;
     if (d.shape === 'C') {
-      sizeHtml = `<div class="field"><label>${t('diameterLabel', { unit: 'mm' })}</label><input id="fAddDia" type="number" step="0.01" value="${d.dia}"></div>`;
+      sizeHtml = `<div class="field"><label>${t('diameterLabel', { unit: 'mm' })}</label><input id="fAddDia" type="number" step="0.001" value="${d.dia}"></div>`;
     } else {
       sizeHtml = `
         <div class="field-row">
-          <div class="field"><label>${t('widthLabel', { unit: 'mm' })}</label><input id="fAddW" type="number" step="0.01" value="${d.w}"></div>
-          <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fAddH" type="number" step="0.01" value="${d.h}"></div>
+          <div class="field"><label>${t('widthLabel', { unit: 'mm' })}</label><input id="fAddW" type="number" step="0.001" value="${d.w}"></div>
+          <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fAddH" type="number" step="0.001" value="${d.h}"></div>
         </div>`;
     }
     inspectorBody.innerHTML = `
@@ -1026,8 +1057,8 @@
       </div>
       ${sizeHtml}
       <div class="field-row">
-        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fAddX" type="number" step="0.01" value="${d.x}"></div>
-        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fAddY" type="number" step="0.01" value="${d.y}"></div>
+        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fAddX" type="number" step="0.001" value="${d.x}"></div>
+        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fAddY" type="number" step="0.001" value="${d.y}"></div>
       </div>
       <button class="primary" id="btnCreatePad" style="width:100%;margin-top:6px;">${t('createPadBtn')}</button>
       <button id="btnCancelAddPad" style="width:100%;margin-top:6px;">${t('doneBtn')}</button>
@@ -1037,7 +1068,12 @@
       state.addPad.shape = e.target.value;
       renderAddPadForm();
     });
-    document.getElementById('btnCreatePad').addEventListener('click', () => {
+    const btnCreatePad = document.getElementById('btnCreatePad');
+    onEnterSubmit([
+      document.getElementById('fAddDia'), document.getElementById('fAddW'), document.getElementById('fAddH'),
+      document.getElementById('fAddX'), document.getElementById('fAddY')
+    ], btnCreatePad);
+    btnCreatePad.addEventListener('click', () => {
       readAddPadDraftFromForm();
       attemptCreatePad(state.addPad.x, state.addPad.y);
     });
@@ -1099,17 +1135,22 @@
       <div class="empty-state" style="margin-bottom:10px;">${t('addTextHint')}</div>
       <div class="field"><label>${t('textContentLabel')}</label><input id="fAddTextContent" type="text" value="${escapeHtml(d.text)}"></div>
       <div class="field-row">
-        <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fAddTextHeight" type="number" step="0.1" value="${d.height}"></div>
-        <div class="field"><label>${t('strokeWidthLabel', { unit: 'mm' })}</label><input id="fAddTextStroke" type="number" step="0.01" value="${d.strokeWidth}" placeholder="auto"></div>
+        <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fAddTextHeight" type="number" step="0.001" value="${d.height}"></div>
+        <div class="field"><label>${t('strokeWidthLabel', { unit: 'mm' })}</label><input id="fAddTextStroke" type="number" step="0.001" value="${d.strokeWidth}" placeholder="auto"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fAddTextX" type="number" step="0.01" value="${d.x}"></div>
-        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fAddTextY" type="number" step="0.01" value="${d.y}"></div>
+        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fAddTextX" type="number" step="0.001" value="${d.x}"></div>
+        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fAddTextY" type="number" step="0.001" value="${d.y}"></div>
       </div>
       <button class="primary" id="btnCreateText" style="width:100%;margin-top:6px;">${t('createTextBtn')}</button>
       <button id="btnCancelAddText" style="width:100%;margin-top:6px;">${t('doneBtn')}</button>
     `;
-    document.getElementById('btnCreateText').addEventListener('click', () => {
+    const btnCreateText = document.getElementById('btnCreateText');
+    onEnterSubmit([
+      document.getElementById('fAddTextContent'), document.getElementById('fAddTextHeight'),
+      document.getElementById('fAddTextStroke'), document.getElementById('fAddTextX'), document.getElementById('fAddTextY')
+    ], btnCreateText);
+    btnCreateText.addEventListener('click', () => {
       readAddTextDraftFromForm();
       attemptCreateText(state.addText.x, state.addText.y);
     });
@@ -1172,19 +1213,24 @@
       <div class="field"><label>${t('layerLabel')}</label><input value="${escapeHtml(lo.name)}" disabled></div>
       <div class="field"><label>${t('textContentLabel')}</label><input id="fEditTextContent" type="text" value="${escapeHtml(tx.text)}"></div>
       <div class="field-row">
-        <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fEditTextHeight" type="number" step="0.1" value="${tx.height}"></div>
-        <div class="field"><label>${t('strokeWidthLabel', { unit: 'mm' })}</label><input id="fEditTextStroke" type="number" step="0.01" value="${(+tx.strokeWidth).toFixed(3)}"></div>
+        <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fEditTextHeight" type="number" step="0.001" value="${tx.height}"></div>
+        <div class="field"><label>${t('strokeWidthLabel', { unit: 'mm' })}</label><input id="fEditTextStroke" type="number" step="0.001" value="${(+tx.strokeWidth).toFixed(3)}"></div>
       </div>
       <div class="field-row">
-        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fEditTextX" type="number" step="0.01" value="${tx.x}"></div>
-        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fEditTextY" type="number" step="0.01" value="${tx.y}"></div>
+        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fEditTextX" type="number" step="0.001" value="${tx.x}"></div>
+        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fEditTextY" type="number" step="0.001" value="${tx.y}"></div>
       </div>
       <button class="primary" id="btnApplyText" style="width:100%;margin-top:6px;">${t('applyBtn')}</button>
       <button id="btnDeselectText" style="width:100%;margin-top:6px;">${t('deselectBtn')}</button>
       <button id="btnDeleteText" class="danger" style="width:100%;margin-top:6px;">${t('deleteTextBtn')}</button>
     `;
 
-    document.getElementById('btnApplyText').addEventListener('click', () => {
+    const btnApplyText = document.getElementById('btnApplyText');
+    onEnterSubmit([
+      document.getElementById('fEditTextContent'), document.getElementById('fEditTextHeight'),
+      document.getElementById('fEditTextStroke'), document.getElementById('fEditTextX'), document.getElementById('fEditTextY')
+    ], btnApplyText);
+    btnApplyText.addEventListener('click', () => {
       const newText = document.getElementById('fEditTextContent').value;
       const newHeight = parseFloat(document.getElementById('fEditTextHeight').value);
       const strokeStr = document.getElementById('fEditTextStroke').value.trim();
@@ -1239,15 +1285,15 @@
     if (ap && ap.shape === 'C') {
       const d = Gerber.toMm(layer, ap.params[0] || 0).toFixed(4);
       sizeFieldsHtml = `
-        <div class="field"><label>${t('diameterLabel', { unit: unitLabel })}</label><input id="fSize1" type="number" step="0.01" value="${d}"></div>
+        <div class="field"><label>${t('diameterLabel', { unit: unitLabel })}</label><input id="fSize1" type="number" step="0.001" value="${d}"></div>
       `;
     } else if (ap && (ap.shape === 'R' || ap.shape === 'O')) {
       const w = Gerber.toMm(layer, ap.params[0] || 0).toFixed(4);
       const h = Gerber.toMm(layer, ap.params[1] || 0).toFixed(4);
       sizeFieldsHtml = `
         <div class="field-row">
-          <div class="field"><label>${t('widthLabel', { unit: unitLabel })}</label><input id="fSize1" type="number" step="0.01" value="${w}"></div>
-          <div class="field"><label>${t('heightLabel', { unit: unitLabel })}</label><input id="fSize2" type="number" step="0.01" value="${h}"></div>
+          <div class="field"><label>${t('widthLabel', { unit: unitLabel })}</label><input id="fSize1" type="number" step="0.001" value="${w}"></div>
+          <div class="field"><label>${t('heightLabel', { unit: unitLabel })}</label><input id="fSize2" type="number" step="0.001" value="${h}"></div>
         </div>
       `;
     } else {
@@ -1258,8 +1304,8 @@
       <div class="field"><label>${t('layerLabel')}</label><input value="${escapeHtml(lo.name)}" disabled></div>
       <div class="field"><label>${t('apertureLabel')}</label><input value="D${flash.dcode} (${ap ? ap.shape : '?'})" disabled></div>
       <div class="field-row">
-        <div class="field"><label>${t('xLabel', { unit: unitLabel })}</label><input id="fX" type="number" step="0.01" value="${xMm}"></div>
-        <div class="field"><label>${t('yLabel', { unit: unitLabel })}</label><input id="fY" type="number" step="0.01" value="${yMm}"></div>
+        <div class="field"><label>${t('xLabel', { unit: unitLabel })}</label><input id="fX" type="number" step="0.001" value="${xMm}"></div>
+        <div class="field"><label>${t('yLabel', { unit: unitLabel })}</label><input id="fY" type="number" step="0.001" value="${yMm}"></div>
       </div>
       ${sizeFieldsHtml}
       <button class="primary" id="btnApply" style="width:100%;margin-top:6px;">${t('applyBtn')}</button>
@@ -1272,7 +1318,12 @@
       <button id="btnDeleteFlash" class="danger" style="width:100%;margin-top:6px;">${t('deletePadBtn')}</button>
     `;
 
-    document.getElementById('btnApply').addEventListener('click', () => {
+    const btnApply = document.getElementById('btnApply');
+    onEnterSubmit([
+      document.getElementById('fX'), document.getElementById('fY'),
+      document.getElementById('fSize1'), document.getElementById('fSize2')
+    ], btnApply);
+    btnApply.addEventListener('click', () => {
       const newX = parseFloat(document.getElementById('fX').value);
       const newY = parseFloat(document.getElementById('fY').value);
       if (isNaN(newX) || isNaN(newY)) { alert(t('alertInvalidPosition')); return; }
@@ -1368,13 +1419,13 @@
 
     let sizeHtml = '';
     if (hasCircle) {
-      sizeHtml += `<div class="field"><label>${t('diameterCircleLabel')}</label><input id="mDia" type="number" step="0.01" placeholder="${t('unchangedPlaceholder')}"></div>`;
+      sizeHtml += `<div class="field"><label>${t('diameterCircleLabel')}</label><input id="mDia" type="number" step="0.001" placeholder="${t('unchangedPlaceholder')}"></div>`;
     }
     if (hasRectOrOval) {
       sizeHtml += `
         <div class="field-row">
-          <div class="field"><label>${t('widthRectLabel')}</label><input id="mW" type="number" step="0.01" placeholder="${t('unchangedPlaceholder')}"></div>
-          <div class="field"><label>${t('heightRectLabel')}</label><input id="mH" type="number" step="0.01" placeholder="${t('unchangedPlaceholder')}"></div>
+          <div class="field"><label>${t('widthRectLabel')}</label><input id="mW" type="number" step="0.001" placeholder="${t('unchangedPlaceholder')}"></div>
+          <div class="field"><label>${t('heightRectLabel')}</label><input id="mH" type="number" step="0.001" placeholder="${t('unchangedPlaceholder')}"></div>
         </div>`;
     }
     if (macroCount > 0) {
@@ -1386,8 +1437,8 @@
       <div class="field"><label>${t('selectionLabel')}</label><input value="${t('selectionCount', { count: flashArr.length })}" disabled></div>
       <h3 style="margin-top:14px;">${t('moveOffsetHeading')}</h3>
       <div class="field-row">
-        <div class="field"><label>Δx (mm)</label><input id="mDx" type="number" step="0.01" value="0"></div>
-        <div class="field"><label>Δy (mm)</label><input id="mDy" type="number" step="0.01" value="0"></div>
+        <div class="field"><label>Δx (mm)</label><input id="mDx" type="number" step="0.001" value="0"></div>
+        <div class="field"><label>Δy (mm)</label><input id="mDy" type="number" step="0.001" value="0"></div>
       </div>
       <h3 style="margin-top:14px;">${t('unifySizeHeading')}</h3>
       ${sizeHtml || '<div class="empty-state">' + t('noEditableApertures') + '</div>'}
@@ -1396,7 +1447,12 @@
       <button id="btnDeleteMulti" class="danger" style="width:100%;margin-top:6px;">${t('deleteManyPadsBtn', { count: flashArr.length })}</button>
     `;
 
-    document.getElementById('btnApplyMulti').addEventListener('click', () => {
+    const btnApplyMulti = document.getElementById('btnApplyMulti');
+    onEnterSubmit([
+      document.getElementById('mDx'), document.getElementById('mDy'),
+      document.getElementById('mDia'), document.getElementById('mW'), document.getElementById('mH')
+    ], btnApplyMulti);
+    btnApplyMulti.addEventListener('click', () => {
       const dxStr = document.getElementById('mDx').value.trim();
       const dyStr = document.getElementById('mDy').value.trim();
       const dx = dxStr === '' ? 0 : parseFloat(dxStr);
