@@ -22,7 +22,7 @@
       addTextTitle: 'Text als Vektor-Strichzeichnung hinzufügen (Esc = beenden)',
       downloadZipBtn: 'Alle als ZIP herunterladen',
       layersHeading: 'Layer',
-      hintText: 'Scrollen = Zoom · Ziehen = Verschieben · Klick = Pad wählen · Shift+Klick = Mehrfachauswahl · Shift+Ziehen = Rahmenauswahl · Entf = Löschen · Esc = Nullpunkt/Messen abbrechen',
+      hintText: 'Scrollen = Zoom · Ziehen = Verschieben · Klick = Pad/Text wählen · Ausgewähltes Element ziehen = verschieben · Shift+Klick = Mehrfachauswahl · Shift+Ziehen = Rahmenauswahl · Entf = Löschen · Esc = Nullpunkt/Messen abbrechen',
       inspectorHeading: 'Pad-Eigenschaften',
       statusReady: 'Bereit.',
       layerListEmpty: 'Noch keine Datei geladen. Lade eine oder mehrere Gerber-Dateien über „Layer laden…“.',
@@ -124,7 +124,7 @@
       addTextTitle: 'Add text as a vector line-art drawing (Esc = stop)',
       downloadZipBtn: 'Download all as ZIP',
       layersHeading: 'Layers',
-      hintText: 'Scroll = zoom · Drag = pan · Click = select pad · Shift+Click = multi-select · Shift+Drag = box select · Del = delete · Esc = cancel origin/measure',
+      hintText: 'Scroll = zoom · Drag = pan · Click = select pad/text · Drag the selected item = move it · Shift+Click = multi-select · Shift+Drag = box select · Del = delete · Esc = cancel origin/measure',
       inspectorHeading: 'Pad Properties',
       statusReady: 'Ready.',
       layerListEmpty: 'No file loaded yet. Load one or more Gerber files via “Load layer…”.',
@@ -651,6 +651,10 @@
     state.mouseWorld = toWorld(e.clientX - rect.left, e.clientY - rect.top);
     updateHud();
     if (state.measureActive && state.measurePoints.length === 1) renderAll();
+
+    if (!dragging && !state.settingOrigin && !state.measureActive && !state.addingPad && !state.addingText) {
+      canvas.style.cursor = movableItemAt(state.mouseWorld) ? 'move' : 'crosshair';
+    }
   });
   canvas.addEventListener('mouseleave', () => {
     state.mouseWorld = null;
@@ -692,13 +696,45 @@
     zoomAt(px, py, factor);
   }, { passive: false });
 
+  // True while the mouse is over the currently-selected pad/text and no tool/box-select would
+  // take precedence - i.e. a mousedown here starts a move-drag rather than a pan.
+  function movableItemAt(world) {
+    const lo = getActiveLayer();
+    if (!lo) return null;
+    if (state.selected && state.selected.flashes.size === 1) {
+      const flash = Array.from(state.selected.flashes)[0];
+      if (hitTestFlash(lo, world) === flash) return { type: 'pad', lo, flash };
+    } else if (state.selectedText && state.selectedText.layerId === lo.id) {
+      const tx = lo.layer.texts[state.selectedText.textId];
+      if (tx && hitTestText(lo, world) === tx.id) return { type: 'text', lo, tx };
+    }
+    return null;
+  }
+
   let dragging = false, dragStart = null, dragMoved = false, dragOffsetStart = null, boxSelecting = false;
+  let movingItem = null; // set on mousedown when dragging the current selection instead of panning
   canvas.addEventListener('mousedown', (e) => {
     dragging = true;
     dragMoved = false;
     dragStart = { x: e.clientX, y: e.clientY };
     dragOffsetStart = { x: state.view.offsetX, y: state.view.offsetY };
     boxSelecting = e.shiftKey;
+    movingItem = null;
+
+    if (!boxSelecting && !state.settingOrigin && !state.measureActive && !state.addingPad && !state.addingText) {
+      const rect = canvas.getBoundingClientRect();
+      const world = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+      const item = movableItemAt(world);
+      if (item) {
+        movingItem = Object.assign(item, {
+          startWorld: world,
+          startXMm: item.type === 'pad' ? Gerber.toMm(item.lo.layer, item.flash.x) : item.tx.x,
+          startYMm: item.type === 'pad' ? Gerber.toMm(item.lo.layer, item.flash.y) : item.tx.y,
+          snapshotted: false
+        });
+      }
+    }
+
     if (boxSelecting) {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
@@ -713,6 +749,25 @@
       const rect = canvas.getBoundingClientRect();
       state.marquee.x1 = e.clientX - rect.left;
       state.marquee.y1 = e.clientY - rect.top;
+      renderAll();
+      return;
+    }
+    if (movingItem) {
+      if (!dragMoved) return;
+      if (!movingItem.snapshotted) {
+        snapshotLayer(movingItem.lo);
+        movingItem.snapshotted = true;
+        movingItem.lo.dirty = true;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const world = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+      const newX = movingItem.startXMm + (world.x - movingItem.startWorld.x);
+      const newY = movingItem.startYMm + (world.y - movingItem.startWorld.y);
+      if (movingItem.type === 'pad') {
+        Gerber.setFlashPosition(movingItem.lo.layer, movingItem.flash, newX, newY);
+      } else {
+        Gerber.setTextPosition(movingItem.lo.layer, movingItem.tx.id, newX, newY);
+      }
       renderAll();
       return;
     }
@@ -731,6 +786,18 @@
       state.marquee = null;
       renderAll();
       return;
+    }
+    if (movingItem) {
+      const wasMoved = dragMoved && movingItem.snapshotted;
+      movingItem = null;
+      if (wasMoved) {
+        updateUndoRedoButtons();
+        renderLayerList();
+        renderInspector();
+        renderAll();
+        setStatus(t('statusReady'));
+        return;
+      }
     }
     if (!dragMoved) {
       const rect = canvas.getBoundingClientRect();

@@ -417,10 +417,10 @@
     'X': { w: 7, strokes: [[[0, 10], [7, 0]], [[0, 0], [7, 10]]] },
     'Y': { w: 7, strokes: [[[0, 10], [3.5, 4.5], [7, 10]], [[3.5, 4.5], [3.5, 0]]] },
     'Z': { w: 6.5, strokes: [[[0, 10], [6.5, 10], [0, 0], [6.5, 0]]] },
-    '.': { w: 3, strokes: [[[1, 0], [1, 0]]] },
-    ',': { w: 3, strokes: [[[1, 0], [1, 0]], [[1.3, 0], [0.3, -2]]] },
-    ':': { w: 3, strokes: [[[1.2, 6], [1.2, 6]], [[1.2, 1.5], [1.2, 1.5]]] },
-    ';': { w: 3, strokes: [[[1.2, 6], [1.2, 6]], [[1.2, 1.5], [1.2, 1.5]], [[1.5, 1.5], [0.5, -1.5]]] },
+    '.': { w: 3, strokes: [[[1, 0], [1.3, 0.3]]] },
+    ',': { w: 3, strokes: [[[1, 0], [1.3, 0.3]], [[1.3, 0], [0.3, -2]]] },
+    ':': { w: 3, strokes: [[[1.2, 6], [1.5, 6.3]], [[1.2, 1.5], [1.5, 1.8]]] },
+    ';': { w: 3, strokes: [[[1.2, 6], [1.5, 6.3]], [[1.2, 1.5], [1.5, 1.8]], [[1.5, 1.5], [0.5, -1.5]]] },
     '-': { w: 5, strokes: [[[0.5, 4], [4.5, 4]]] },
     '_': { w: 6, strokes: [[[0, -1], [6, -1]]] },
     '/': { w: 6, strokes: [[[0, 0], [6, 10]]] },
@@ -431,8 +431,8 @@
     '#': { w: 7, strokes: [[[1.5, 0], [1.5, 10]], [[5, 0], [5, 10]], [[0, 3.3], [6.5, 3.3]], [[0, 6.6], [6.5, 6.6]]] },
     "'": { w: 2.5, strokes: [[[1, 8], [1.5, 10]]] },
     '"': { w: 4, strokes: [[[1, 8], [1.5, 10]], [[2.7, 8], [3.2, 10]]] },
-    '!': { w: 2.5, strokes: [[[1.2, 10], [1, 3]], [[1, 0], [1, 0]]] },
-    '?': { w: 6, strokes: [[[0, 8], [1, 10], [4, 10], [5.5, 8.5], [5.5, 7], [3, 5], [3, 3]], [[3, 0], [3, 0]]] }
+    '!': { w: 2.5, strokes: [[[1.2, 10], [1, 3]], [[1, 0], [1.3, 0.3]]] },
+    '?': { w: 6, strokes: [[[0, 8], [1, 10], [4, 10], [5.5, 8.5], [5.5, 7], [3, 5], [3, 3]], [[3, 0], [3.3, 0.3]]] }
   };
   const FONT_FALLBACK = { w: 7, strokes: [[[0.5, 0], [0.5, 10], [6, 10], [6, 0], [0.5, 0]]] };
   const FONT_LETTER_GAP = 1.2; // grid units between glyphs' advance boxes
@@ -541,6 +541,26 @@
     return addText(layer, text, xMm, yMm, heightMm, strokeWidthMm);
   }
 
+  // Move a text object to an absolute position without regenerating its strokes - just shifts
+  // every one of its commands (and their prevX/prevY, which for a text block always point at
+  // another command within the same block) by the same delta. Used for mouse-drag repositioning,
+  // where regenerating the whole glyph geometry on every mousemove would be wasteful.
+  function setTextPosition(layer, textId, xMm, yMm) {
+    const tx = layer.texts[textId];
+    if (!tx) return false;
+    const dx = toFileUnits(layer, xMm - tx.x);
+    const dy = toFileUnits(layer, yMm - tx.y);
+    layer.commands.forEach(c => {
+      if (c.textId === textId) {
+        c.x += dx; c.y += dy;
+        c.prevX += dx; c.prevY += dy;
+        c.raw = rebuildOpRaw(c, layer.fs);
+      }
+    });
+    tx.x = xMm; tx.y = yMm;
+    return true;
+  }
+
   // Change the size of one or more flashes at once. newParams are in the layer's native units
   // already (mm or inch, matching aperture definition convention), e.g. [diameter] for C, [w,h]
   // for R/O. Flashes are grouped by their current aperture: if every flash using a given aperture
@@ -641,6 +661,7 @@
     addText,
     removeText,
     editText,
+    setTextPosition,
     textWidthMm,
     apertureExtents,
     toMm,
