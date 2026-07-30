@@ -370,6 +370,145 @@
     return flashCmd;
   }
 
+  // ---- Vector stroke font (for addText) ----
+  // Gerber has no native text primitive - real Gerber silkscreen text is always plain vector
+  // artwork (line draws), same as any trace. Each glyph below is defined on a fixed grid
+  // (baseline y=0, cap-height y=10, x grows right) as one or more open polylines ("strokes");
+  // a degenerate single-point stroke (start === end) intentionally renders as a round dot
+  // (relies on the renderer's round line caps) for punctuation like '.' and ':'.
+  // `w` is the glyph's advance width in the same grid units.
+  const FONT_STROKES = {
+    ' ': { w: 6, strokes: [] },
+    '0': { w: 7, strokes: [[[2, 0], [0.5, 1.5], [0, 3], [0, 7], [0.5, 8.5], [2, 10], [4, 10], [6, 8.5], [6.5, 7], [6.5, 3], [6, 1.5], [4, 0], [2, 0]]] },
+    '1': { w: 5, strokes: [[[0.5, 8], [2, 10], [2, 0]], [[0.5, 0], [3.5, 0]]] },
+    '2': { w: 7, strokes: [[[0, 7], [0, 9], [2, 10], [4, 10], [6, 9], [6, 7], [0, 1], [0, 0], [6, 0]]] },
+    '3': { w: 7, strokes: [[[0, 9], [1, 10], [5, 10], [6, 9], [6, 6], [3, 5], [6, 4], [6, 1], [5, 0], [1, 0], [0, 1]]] },
+    '4': { w: 7, strokes: [[[4.5, 0], [4.5, 10], [0, 3], [6.5, 3]]] },
+    '5': { w: 7, strokes: [[[6, 10], [0, 10], [0, 5], [4, 5], [6, 3.5], [6, 1], [5, 0], [1, 0], [0, 1]]] },
+    '6': { w: 7, strokes: [[[6, 9], [4, 10], [2, 10], [0, 7], [0, 2], [2, 0], [4, 0], [6, 2], [6, 4], [4, 5.5], [0, 5]]] },
+    '7': { w: 7, strokes: [[[0, 10], [6.5, 10], [2, 0]]] },
+    '8': { w: 7, strokes: [[[2, 5], [0, 6.5], [0, 8.5], [2, 10], [4, 10], [6, 8.5], [6, 6.5], [2, 5], [6, 3.5], [6, 1.5], [4, 0], [2, 0], [0, 1.5], [0, 3.5], [2, 5]]] },
+    '9': { w: 7, strokes: [[[4.5, 5.5], [2.5, 5.3], [1, 6.3], [0.7, 8], [1.7, 9.3], [3.5, 10], [5, 9.5], [5.8, 8], [5.5, 6.3], [4.5, 5.5]], [[5.6, 7], [5, 3], [3, 0.3], [1, 0]]] },
+    'A': { w: 8, strokes: [[[0, 0], [4, 10], [8, 0]], [[1.6, 3.5], [6.4, 3.5]]] },
+    'B': { w: 7, strokes: [[[0, 0], [0, 10], [4.5, 10], [6, 8.5], [6, 6.5], [4.5, 5], [0, 5]], [[0, 5], [5, 5], [6.5, 3.5], [6.5, 1.5], [5, 0], [0, 0]]] },
+    'C': { w: 7, strokes: [[[6, 2], [4, 0], [2, 0], [0, 2], [0, 8], [2, 10], [4, 10], [6, 8]]] },
+    'D': { w: 7, strokes: [[[0, 0], [0, 10], [3.5, 10], [6, 7.5], [6, 2.5], [3.5, 0], [0, 0]]] },
+    'E': { w: 6.5, strokes: [[[6, 10], [0, 10], [0, 0], [6, 0]], [[0, 5], [4.5, 5]]] },
+    'F': { w: 6.5, strokes: [[[6, 10], [0, 10], [0, 0]], [[0, 5], [4.5, 5]]] },
+    'G': { w: 7.5, strokes: [[[7, 7], [5.5, 9.5], [3.5, 10], [1.5, 9], [0.3, 6.5], [0.3, 3.5], [1.5, 1], [3.5, 0], [5.5, 0.5], [7, 3]], [[7, 5], [3.5, 5], [3.5, 2]]] },
+    'H': { w: 7, strokes: [[[0, 0], [0, 10]], [[6, 0], [6, 10]], [[0, 5], [6, 5]]] },
+    'I': { w: 3, strokes: [[[1.5, 0], [1.5, 10]]] },
+    'J': { w: 6, strokes: [[[5, 10], [5, 2], [3.5, 0], [1.5, 0], [0, 2]]] },
+    'K': { w: 7, strokes: [[[0, 0], [0, 10]], [[6, 10], [0, 4.5]], [[1.8, 6], [6, 0]]] },
+    'L': { w: 6, strokes: [[[0, 10], [0, 0], [6, 0]]] },
+    'M': { w: 8.5, strokes: [[[0, 0], [0, 10], [4.25, 4], [8.5, 10], [8.5, 0]]] },
+    'N': { w: 7.5, strokes: [[[0, 0], [0, 10], [7.5, 0], [7.5, 10]]] },
+    'O': { w: 7.5, strokes: [[[2.5, 0], [0.5, 1.5], [0, 3], [0, 7], [0.5, 8.5], [2.5, 10], [5, 10], [7, 8.5], [7.5, 7], [7.5, 3], [7, 1.5], [5, 0], [2.5, 0]]] },
+    'P': { w: 6.5, strokes: [[[0, 0], [0, 10], [4.5, 10], [6.5, 8], [6.5, 6], [4.5, 4], [0, 4]]] },
+    'Q': { w: 7.5, strokes: [[[2.5, 0], [0.5, 1.5], [0, 3], [0, 7], [0.5, 8.5], [2.5, 10], [5, 10], [7, 8.5], [7.5, 7], [7.5, 3], [7, 1.5], [5, 0], [2.5, 0]], [[4, 2.5], [7.5, -1.5]]] },
+    'R': { w: 7, strokes: [[[0, 0], [0, 10], [4.5, 10], [6.5, 8], [6.5, 6], [4.5, 4], [0, 4]], [[3, 4], [6.5, 0]]] },
+    'S': { w: 7, strokes: [[[6, 8.5], [4, 10], [2, 10], [0, 8.5], [0, 6.5], [2, 5], [4.5, 5], [6.5, 3.5], [6.5, 1.5], [4.5, 0], [1.5, 0], [0, 1.5]]] },
+    'T': { w: 7, strokes: [[[0, 10], [7, 10]], [[3.5, 10], [3.5, 0]]] },
+    'U': { w: 7.5, strokes: [[[0, 10], [0, 3], [1.5, 0.5], [3.75, 0], [6, 0.5], [7.5, 3], [7.5, 10]]] },
+    'V': { w: 7.5, strokes: [[[0, 10], [3.75, 0], [7.5, 10]]] },
+    'W': { w: 10, strokes: [[[0, 10], [2.5, 0], [5, 7], [7.5, 0], [10, 10]]] },
+    'X': { w: 7, strokes: [[[0, 10], [7, 0]], [[0, 0], [7, 10]]] },
+    'Y': { w: 7, strokes: [[[0, 10], [3.5, 4.5], [7, 10]], [[3.5, 4.5], [3.5, 0]]] },
+    'Z': { w: 6.5, strokes: [[[0, 10], [6.5, 10], [0, 0], [6.5, 0]]] },
+    '.': { w: 3, strokes: [[[1, 0], [1, 0]]] },
+    ',': { w: 3, strokes: [[[1, 0], [1, 0]], [[1.3, 0], [0.3, -2]]] },
+    ':': { w: 3, strokes: [[[1.2, 6], [1.2, 6]], [[1.2, 1.5], [1.2, 1.5]]] },
+    ';': { w: 3, strokes: [[[1.2, 6], [1.2, 6]], [[1.2, 1.5], [1.2, 1.5]], [[1.5, 1.5], [0.5, -1.5]]] },
+    '-': { w: 5, strokes: [[[0.5, 4], [4.5, 4]]] },
+    '_': { w: 6, strokes: [[[0, -1], [6, -1]]] },
+    '/': { w: 6, strokes: [[[0, 0], [6, 10]]] },
+    '(': { w: 4, strokes: [[[3, 10], [1, 7], [1, 3], [3, 0]]] },
+    ')': { w: 4, strokes: [[[1, 10], [3, 7], [3, 3], [1, 0]]] },
+    '+': { w: 6, strokes: [[[3, 1], [3, 7]], [[0, 4], [6, 4]]] },
+    '=': { w: 6, strokes: [[[0, 3], [6, 3]], [[0, 6], [6, 6]]] },
+    '#': { w: 7, strokes: [[[1.5, 0], [1.5, 10]], [[5, 0], [5, 10]], [[0, 3.3], [6.5, 3.3]], [[0, 6.6], [6.5, 6.6]]] },
+    "'": { w: 2.5, strokes: [[[1, 8], [1.5, 10]]] },
+    '"': { w: 4, strokes: [[[1, 8], [1.5, 10]], [[2.7, 8], [3.2, 10]]] },
+    '!': { w: 2.5, strokes: [[[1.2, 10], [1, 3]], [[1, 0], [1, 0]]] },
+    '?': { w: 6, strokes: [[[0, 8], [1, 10], [4, 10], [5.5, 8.5], [5.5, 7], [3, 5], [3, 3]], [[3, 0], [3, 0]]] }
+  };
+  const FONT_FALLBACK = { w: 7, strokes: [[[0.5, 0], [0.5, 10], [6, 10], [6, 0], [0.5, 0]]] };
+  const FONT_LETTER_GAP = 1.2; // grid units between glyphs' advance boxes
+
+  // Total advance width of `text` in mm at the given cap height, ignoring the font's inherent
+  // left margin. Useful for centering or right-aligning text before calling addText.
+  function textWidthMm(text, heightMm) {
+    const scale = heightMm / 10;
+    let units = 0;
+    for (const ch of text) {
+      const glyph = FONT_STROKES[ch.toUpperCase()] || (ch === ' ' ? FONT_STROKES[' '] : FONT_FALLBACK);
+      units += glyph.w + FONT_LETTER_GAP;
+    }
+    if (units > 0) units -= FONT_LETTER_GAP;
+    return units * scale;
+  }
+
+  // Add a line of text to the layer as plain vector strokes (there is no text primitive in
+  // Gerber - this is exactly how real EDA tools generate silkscreen text). (xMm, yMm) is the
+  // bottom-left baseline anchor of the first character. heightMm is the cap height; strokeWidthMm
+  // defaults to a legible ~15% of the height if omitted. Reuses a matching circular aperture as
+  // the "pen" if one already exists (same dedup logic as addFlash), otherwise defines a new one.
+  // Unsupported characters are drawn as a small placeholder box instead of silently vanishing.
+  function addText(layer, text, xMm, yMm, heightMm, strokeWidthMm) {
+    const strokeW = strokeWidthMm || heightMm * 0.15;
+    const x0 = toFileUnits(layer, xMm);
+    const y0 = toFileUnits(layer, yMm);
+    const scale = toFileUnits(layer, heightMm) / 10;
+
+    let dcode = findMatchingAperture(layer, 'C', [strokeW]);
+    let insertIdx = layer.commands.length;
+    while (insertIdx > 0 && layer.commands[insertIdx - 1].type === 'mcode') insertIdx--;
+
+    if (dcode === null) {
+      dcode = layer.maxDcode + 1;
+      layer.maxDcode = dcode;
+      const raw = rebuildAdRaw(dcode, 'C', [strokeW], null);
+      layer.apertures[dcode] = { shape: 'C', params: [strokeW], macroName: null, raw };
+      let adInsertAt = 0;
+      for (let i = 0; i < layer.commands.length; i++) {
+        if (layer.commands[i].type === 'ad') adInsertAt = i + 1;
+      }
+      layer.commands.splice(adInsertAt, 0, { type: 'ad', raw, dcode });
+      if (adInsertAt <= insertIdx) insertIdx++;
+    }
+
+    layer.commands.splice(insertIdx, 0, { type: 'aselect', raw: 'D' + dcode, dcode });
+    insertIdx++;
+
+    const created = [];
+    let penX = 0;
+    let curX = x0, curY = y0; // running pen position (file units), threaded through as prevX/prevY
+    for (const ch of text) {
+      const glyph = FONT_STROKES[ch.toUpperCase()] || (ch === ' ' ? FONT_STROKES[' '] : FONT_FALLBACK);
+      glyph.strokes.forEach(stroke => {
+        stroke.forEach((pt, i) => {
+          const targetX = x0 + (penX + pt[0]) * scale;
+          const targetY = y0 + pt[1] * scale;
+          const cmd = {
+            type: 'op', raw: '', op: i === 0 ? 'D02' : 'D01', gcode: i === 0 ? null : 1,
+            x: targetX, y: targetY, i: 0, j: 0,
+            hasX: true, hasY: true, hasI: false, hasJ: false,
+            prevX: curX, prevY: curY, dcode, polarity: 'D',
+            region: false, gmode: 1, quad: 'single'
+          };
+          curX = targetX; curY = targetY;
+          cmd.raw = rebuildOpRaw(cmd, layer.fs);
+          layer.commands.splice(insertIdx, 0, cmd);
+          insertIdx++;
+          created.push(cmd);
+        });
+      });
+      penX += glyph.w + FONT_LETTER_GAP;
+    }
+
+    return { commands: created, widthMm: Math.max(0, penX - FONT_LETTER_GAP) * (heightMm / 10) };
+  }
+
   // Change the size of one or more flashes at once. newParams are in the layer's native units
   // already (mm or inch, matching aperture definition convention), e.g. [diameter] for C, [w,h]
   // for R/O. Flashes are grouped by their current aperture: if every flash using a given aperture
@@ -467,6 +606,8 @@
     setFlashesSize,
     removeFlashes,
     addFlash,
+    addText,
+    textWidthMm,
     apertureExtents,
     toMm,
     toFileUnits

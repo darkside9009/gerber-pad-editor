@@ -19,6 +19,7 @@
       measureBtn: 'Messen',
       measureTitle: 'Distanz zwischen zwei Punkten messen (Esc = beenden)',
       addPadTitle: 'Neues Pad (Kreis/Rechteck) zeichnen und platzieren (Esc = beenden)',
+      addTextTitle: 'Text als Vektor-Strichzeichnung hinzufügen (Esc = beenden)',
       downloadZipBtn: 'Alle als ZIP herunterladen',
       layersHeading: 'Layer',
       hintText: 'Scrollen = Zoom · Ziehen = Verschieben · Klick = Pad wählen · Shift+Klick = Mehrfachauswahl · Shift+Ziehen = Rahmenauswahl · Entf = Löschen · Esc = Nullpunkt/Messen abbrechen',
@@ -64,6 +65,15 @@
       alertInvalidWH: 'Ungültige Breite/Höhe.',
       alertInvalidPosition: 'Ungültige Position.',
       statusPadCreated: 'Pad erstellt bei X={{x}}mm, Y={{y}}mm.',
+      statusAddTextActive: 'Klicke auf eine Stelle im Canvas, um dort den Text zu platzieren - oder gib X/Y ein und klicke „Text erstellen“. Esc = beenden.',
+      addTextHint: 'Klicke auf eine Stelle im Canvas, um dort den unten eingestellten Text zu platzieren (X/Y = untere linke Ecke) - oder gib X/Y direkt ein und klicke „Text erstellen“. Text wird als Vektor-Strichzeichnung eingefügt und kann danach nicht mehr als Ganzes ausgewählt/verschoben werden - bei Bedarf einfach rückgängig machen (Strg/Cmd+Z) und neu platzieren.',
+      textContentLabel: 'Text',
+      strokeWidthLabel: 'Strichstärke ({{unit}}) - leer = automatisch',
+      createTextBtn: 'Text erstellen',
+      alertEmptyText: 'Bitte einen Text eingeben.',
+      alertInvalidHeight: 'Ungültige Höhe.',
+      alertInvalidStrokeWidth: 'Ungültige Strichstärke.',
+      statusTextCreated: 'Text erstellt bei X={{x}}mm, Y={{y}}mm.',
       inspectorEmptyNoSelection: 'Kein Pad ausgewählt. Wähle zuerst links den zu bearbeitenden Layer aus (aktiv) und klicke dann im Canvas auf ein Pad.<br><br>Shift+Klick = Pad zur Auswahl hinzufügen/entfernen.<br>Shift+Ziehen = mehrere Pads mit einem Rahmen auswählen.',
       layerLabel: 'Layer',
       apertureLabel: 'Apertur',
@@ -107,6 +117,7 @@
       measureBtn: 'Measure',
       measureTitle: 'Measure the distance between two points (Esc = stop)',
       addPadTitle: 'Draw and place a new pad (circle/rectangle) (Esc = stop)',
+      addTextTitle: 'Add text as a vector line-art drawing (Esc = stop)',
       downloadZipBtn: 'Download all as ZIP',
       layersHeading: 'Layers',
       hintText: 'Scroll = zoom · Drag = pan · Click = select pad · Shift+Click = multi-select · Shift+Drag = box select · Del = delete · Esc = cancel origin/measure',
@@ -152,6 +163,15 @@
       alertInvalidWH: 'Invalid width/height.',
       alertInvalidPosition: 'Invalid position.',
       statusPadCreated: 'Pad created at X={{x}}mm, Y={{y}}mm.',
+      statusAddTextActive: 'Click a spot on the canvas to place the text there - or enter X/Y and click “Create text”. Esc = stop.',
+      addTextHint: 'Click a spot on the canvas to place the text set below there (X/Y = bottom-left corner) - or enter X/Y directly and click “Create text”. Text is inserted as vector line art and can\'t be selected/moved as a whole afterwards - just undo (Ctrl/Cmd+Z) and re-place it if needed.',
+      textContentLabel: 'Text',
+      strokeWidthLabel: 'Line width ({{unit}}) - blank = automatic',
+      createTextBtn: 'Create text',
+      alertEmptyText: 'Please enter some text.',
+      alertInvalidHeight: 'Invalid height.',
+      alertInvalidStrokeWidth: 'Invalid line width.',
+      statusTextCreated: 'Text created at X={{x}}mm, Y={{y}}mm.',
       inspectorEmptyNoSelection: 'No pad selected. First select the layer to edit on the left (active), then click a pad on the canvas.<br><br>Shift+Click = add/remove pad from selection.<br>Shift+Drag = select multiple pads with a box.',
       layerLabel: 'Layer',
       apertureLabel: 'Aperture',
@@ -224,7 +244,9 @@
     measurePoints: [],       // 0-2 points ({x,y} mm, absolute file coords) of the current measurement
     mouseWorld: null,        // {x,y} mm, absolute file coords - last known mouse position over the canvas
     addingPad: false,        // true while the "+ Pad" tool is toggled on
-    addPad: { shape: 'C', dia: 1.0, w: 1.0, h: 1.0, x: 0, y: 0 } // draft values for the new-pad form
+    addPad: { shape: 'C', dia: 1.0, w: 1.0, h: 1.0, x: 0, y: 0 }, // draft values for the new-pad form
+    addingText: false,       // true while the "+ Text" tool is toggled on
+    addText: { text: 'TEXT', height: 2.0, strokeWidth: '', x: 0, y: 0 } // draft values for the new-text form
   };
 
   let nextLayerId = 1;
@@ -247,6 +269,7 @@
   const btnResetOrigin = document.getElementById('btnResetOrigin');
   const btnMeasure = document.getElementById('btnMeasure');
   const btnAddPad = document.getElementById('btnAddPad');
+  const btnAddText = document.getElementById('btnAddText');
   const langSelect = document.getElementById('langSelect');
   const hud = document.getElementById('hud');
 
@@ -546,6 +569,7 @@
     if (except !== 'origin') { state.settingOrigin = false; btnSetOrigin.classList.remove('active'); }
     if (except !== 'measure') { state.measureActive = false; state.measurePoints = []; btnMeasure.classList.remove('active'); }
     if (except !== 'addPad') { state.addingPad = false; btnAddPad.classList.remove('active'); }
+    if (except !== 'addText') { state.addingText = false; btnAddText.classList.remove('active'); }
   }
 
   btnSetOrigin.addEventListener('click', () => {
@@ -598,6 +622,21 @@
     renderAll();
   });
 
+  btnAddText.addEventListener('click', () => {
+    if (!state.addingText && !getActiveLayer()) { alert(t('alertNoActiveLayerLong')); return; }
+    state.addingText = !state.addingText;
+    btnAddText.classList.toggle('active', state.addingText);
+    if (state.addingText) {
+      deactivateOtherTools('addText');
+      clearSelection();
+      setStatus(t('statusAddTextActive'));
+    } else {
+      setStatus(t('statusReady'));
+    }
+    renderInspector();
+    renderAll();
+  });
+
   canvas.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
     state.mouseWorld = toWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -611,7 +650,7 @@
 
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!state.settingOrigin && !state.measureActive && state.measurePoints.length === 0 && !state.addingPad) return;
+    if (!state.settingOrigin && !state.measureActive && state.measurePoints.length === 0 && !state.addingPad && !state.addingText) return;
     deactivateOtherTools(null);
     setStatus(t('statusReady'));
     renderInspector();
@@ -709,6 +748,12 @@
         const world = toWorld(px, py);
         readAddPadDraftFromForm();
         attemptCreatePad(world.x, world.y);
+        return;
+      }
+      if (state.addingText) {
+        const world = toWorld(px, py);
+        readAddTextDraftFromForm();
+        attemptCreateText(world.x, world.y);
         return;
       }
       handleClick(px, py, e.shiftKey);
@@ -929,8 +974,77 @@
     setStatus(t('statusPadCreated', { x: xMm.toFixed(3), y: yMm.toFixed(3) }));
   }
 
+  // ---------- Add-text tool ----------
+  function renderAddTextForm() {
+    const d = state.addText;
+    inspectorBody.innerHTML = `
+      <div class="empty-state" style="margin-bottom:10px;">${t('addTextHint')}</div>
+      <div class="field"><label>${t('textContentLabel')}</label><input id="fAddTextContent" type="text" value="${escapeHtml(d.text)}"></div>
+      <div class="field-row">
+        <div class="field"><label>${t('heightLabel', { unit: 'mm' })}</label><input id="fAddTextHeight" type="number" step="0.1" value="${d.height}"></div>
+        <div class="field"><label>${t('strokeWidthLabel', { unit: 'mm' })}</label><input id="fAddTextStroke" type="number" step="0.01" value="${d.strokeWidth}" placeholder="auto"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>${t('xLabel', { unit: 'mm' })}</label><input id="fAddTextX" type="number" step="0.01" value="${d.x}"></div>
+        <div class="field"><label>${t('yLabel', { unit: 'mm' })}</label><input id="fAddTextY" type="number" step="0.01" value="${d.y}"></div>
+      </div>
+      <button class="primary" id="btnCreateText" style="width:100%;margin-top:6px;">${t('createTextBtn')}</button>
+      <button id="btnCancelAddText" style="width:100%;margin-top:6px;">${t('doneBtn')}</button>
+    `;
+    document.getElementById('btnCreateText').addEventListener('click', () => {
+      readAddTextDraftFromForm();
+      attemptCreateText(state.addText.x, state.addText.y);
+    });
+    document.getElementById('btnCancelAddText').addEventListener('click', () => {
+      state.addingText = false;
+      btnAddText.classList.remove('active');
+      setStatus(t('statusReady'));
+      renderInspector();
+    });
+  }
+
+  function readAddTextDraftFromForm() {
+    const d = state.addText;
+    const elText = document.getElementById('fAddTextContent');
+    const elHeight = document.getElementById('fAddTextHeight');
+    const elStroke = document.getElementById('fAddTextStroke');
+    const elX = document.getElementById('fAddTextX'), elY = document.getElementById('fAddTextY');
+    if (elText) d.text = elText.value;
+    if (elHeight) d.height = parseFloat(elHeight.value);
+    if (elStroke) d.strokeWidth = elStroke.value.trim();
+    if (elX) d.x = parseFloat(elX.value);
+    if (elY) d.y = parseFloat(elY.value);
+  }
+
+  function attemptCreateText(xMm, yMm) {
+    const lo = getActiveLayer();
+    if (!lo) { alert(t('alertNoActiveLayerShort')); return; }
+    const d = state.addText;
+    if (!d.text || !d.text.trim()) { alert(t('alertEmptyText')); return; }
+    if (isNaN(d.height) || d.height <= 0) { alert(t('alertInvalidHeight')); return; }
+    let strokeWidth = null;
+    if (d.strokeWidth !== '') {
+      strokeWidth = parseFloat(d.strokeWidth);
+      if (isNaN(strokeWidth) || strokeWidth <= 0) { alert(t('alertInvalidStrokeWidth')); return; }
+    }
+    if (isNaN(xMm) || isNaN(yMm)) { alert(t('alertInvalidPosition')); return; }
+
+    snapshotLayer(lo);
+    Gerber.addText(lo.layer, d.text, xMm, yMm, d.height, strokeWidth);
+    lo.dirty = true;
+    state.addingText = false;
+    btnAddText.classList.remove('active');
+    clearSelection();
+    updateUndoRedoButtons();
+    renderLayerList();
+    renderInspector();
+    renderAll();
+    setStatus(t('statusTextCreated', { x: xMm.toFixed(3), y: yMm.toFixed(3) }));
+  }
+
   // ---------- Inspector ----------
   function renderInspector() {
+    if (state.addingText) { renderAddTextForm(); return; }
     if (state.addingPad) { renderAddPadForm(); return; }
     if (!state.selected || state.selected.flashes.size === 0) {
       inspectorBody.innerHTML = '<div class="empty-state">' + t('inspectorEmptyNoSelection') + '</div>';
@@ -1441,7 +1555,8 @@
       toScreen, toWorld, handleClick, applyMarqueeSelection, clearSelection,
       getActiveLayer, getLayerObj, resizeCanvas, undo, redo, snapshotLayer,
       deleteSelectedFlashes, selectAllSameSize, updateHud,
-      attemptCreatePad, readAddPadDraftFromForm
+      attemptCreatePad, readAddPadDraftFromForm,
+      attemptCreateText, readAddTextDraftFromForm
     };
   }
 })();
